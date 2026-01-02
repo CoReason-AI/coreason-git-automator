@@ -52,11 +52,13 @@ def mock_boundaries():
             "choices": [
                 {
                     "message": {
-                        "content": json.dumps({
-                            "commit_title": "feat: new feature",
-                            "commit_body": "- added feature",
-                            "branch_name": "feat/new-feature",
-                        })
+                        "content": json.dumps(
+                            {
+                                "commit_title": "feat: new feature",
+                                "commit_body": "- added feature",
+                                "branch_name": "feat/new-feature",
+                            }
+                        )
                     }
                 }
             ]
@@ -77,7 +79,6 @@ def test_holistic_happy_path(mock_env, mock_boundaries):
     def side_effect(args, **kwargs):
         # args is typically a list of strings
         cmd_list = args if isinstance(args, list) else args
-        cmd_str = " ".join(str(x) for x in cmd_list)
 
         # 1. Jules Version
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
@@ -87,9 +88,7 @@ def test_holistic_happy_path(mock_env, mock_boundaries):
         if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
             # Simulate Success immediately
             return MagicMock(
-                stdout=json.dumps(
-                    [{"status": "completed", "conclusion": "success", "databaseId": 12345}]
-                ),
+                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 12345}]),
                 returncode=0,
             )
 
@@ -128,9 +127,7 @@ def test_holistic_happy_path(mock_env, mock_boundaries):
     mock_http.__enter__.return_value.post.assert_called_once()
 
     # Verify Git Push (subprocess call)
-    assert any(
-        "git" in str(call) and "push" in str(call) for call in mock_run.call_args_list
-    )
+    assert any("git" in str(call) and "push" in str(call) for call in mock_run.call_args_list)
 
 
 def test_holistic_self_healing(mock_env, mock_boundaries):
@@ -147,7 +144,6 @@ def test_holistic_self_healing(mock_env, mock_boundaries):
 
     def side_effect(args, **kwargs):
         cmd_list = args if isinstance(args, list) else args
-        cmd_str = " ".join(str(x) for x in cmd_list)
 
         # 1. Jules Version
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
@@ -159,25 +155,19 @@ def test_holistic_self_healing(mock_env, mock_boundaries):
                 state.checked_once = True
                 # Fail first time
                 return MagicMock(
-                    stdout=json.dumps(
-                        [{"status": "completed", "conclusion": "failure", "databaseId": 111}]
-                    ),
+                    stdout=json.dumps([{"status": "completed", "conclusion": "failure", "databaseId": 111}]),
                     returncode=0,
                 )
             else:
                 # Success second time
                 return MagicMock(
-                    stdout=json.dumps(
-                        [{"status": "completed", "conclusion": "success", "databaseId": 222}]
-                    ),
+                    stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 222}]),
                     returncode=0,
                 )
 
         # 3. GitHub Run Logs
         if "gh" in cmd_list and "run" in cmd_list and "view" in cmd_list:
-            return MagicMock(
-                stdout="Error: SyntaxError on line 10\n" * 10, returncode=0
-            )
+            return MagicMock(stdout="Error: SyntaxError on line 10\n" * 10, returncode=0)
 
         # 4. Jules Chat (Feedback)
         if "/usr/bin/jules" in cmd_list and "remote" in cmd_list and "chat" in cmd_list:
@@ -209,9 +199,7 @@ def test_holistic_self_healing(mock_env, mock_boundaries):
     assert "CI passed!" in result.stdout
 
     # Verify feedback sent
-    feedback_calls = [
-        c for c in mock_run.call_args_list if "/usr/bin/jules" in str(c) and "chat" in str(c)
-    ]
+    feedback_calls = [c for c in mock_run.call_args_list if "/usr/bin/jules" in str(c) and "chat" in str(c)]
     assert len(feedback_calls) == 1
     # Check that logs were passed (we mocked logs with "SyntaxError")
     assert "SyntaxError" in str(feedback_calls[0])
