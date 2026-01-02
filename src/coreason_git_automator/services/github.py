@@ -31,7 +31,8 @@ class GitHubService:
         try:
             cmd = ["gh"] + args
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            if not result.stdout.strip():  # pragma: no cover
+            stdout = result.stdout.strip()
+            if stdout == "":  # pragma: no cover
                 return None
             res = json.loads(result.stdout)
             if isinstance(res, dict):
