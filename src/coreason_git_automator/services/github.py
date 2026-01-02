@@ -31,9 +31,7 @@ class GitHubService:
         try:
             cmd = ["gh"] + args
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            stdout = result.stdout.strip()
-            if stdout == "":  # pragma: no cover
-                return None
+            # Try to parse JSON. If empty, it will raise JSONDecodeError.
             res = json.loads(result.stdout)
             if isinstance(res, dict):
                 return res
@@ -44,6 +42,9 @@ class GitHubService:
             logger.error(f"GitHub CLI command failed: {e.stderr}")
             raise RuntimeError(f"GitHub CLI command failed: {e.stderr}") from e
         except json.JSONDecodeError as e:
+            # If output is empty, return None (no result). Otherwise re-raise.
+            if not result.stdout.strip():  # pragma: no cover
+                return None
             logger.error(f"Failed to parse GitHub CLI output: {e}")
             raise RuntimeError(f"Failed to parse GitHub CLI output: {e}") from e
 

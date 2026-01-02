@@ -122,6 +122,14 @@ def test_run_gh_command_empty_output(github_service):
         assert result is None
 
 
+def test_run_gh_command_primitive(github_service):
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout="true", returncode=0)
+
+        result = github_service._run_gh_command(["some", "command"])
+        assert result is None
+
+
 def test_run_gh_command_empty_string(github_service):
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="", returncode=0)
