@@ -136,3 +136,14 @@ def test_start_exception(mock_deps):
 
     assert result.exit_code == 1
     assert "Error: Fail" in result.stdout
+
+
+def test_start_git_conflict(mock_deps):
+    # Simulate git merge conflict
+    mock_deps["git"].merge_squash.side_effect = RuntimeError("Merge conflict")
+
+    result = runner.invoke(app, ["start", "Task", "--auto-fix"])
+
+    assert result.exit_code == 1
+    assert "Git operation failed" in result.stdout
+    assert "Merge Conflict" in result.stdout

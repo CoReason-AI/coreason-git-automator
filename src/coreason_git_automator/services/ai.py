@@ -11,6 +11,7 @@
 import json
 
 import httpx
+from pydantic import ValidationError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from coreason_git_automator.config import AutomationConfig
@@ -67,7 +68,7 @@ class DeepSeekClient:
         except httpx.HTTPError as e:
             logger.error(f"DeepSeek API error: {e}")
             raise RuntimeError(f"DeepSeek API error: {e}") from e
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError, ValidationError) as e:
             logger.error(f"Failed to parse DeepSeek response: {e}")
             raise RuntimeError(f"Failed to parse DeepSeek response: {e}") from e
         except Exception as e:

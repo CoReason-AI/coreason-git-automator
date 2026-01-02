@@ -131,7 +131,12 @@ def start(
         git.checkout(base_branch)
         git.pull()
         git.create_branch(commit_info.branch_name)
-        git.merge_squash(jules_branch)
+        try:
+            git.merge_squash(jules_branch)
+        except RuntimeError as e:
+            console.print("[bold red]Git operation failed (Merge Conflict).[/bold red]")
+            raise typer.Exit(code=1) from e
+
         git.commit(commit_info.commit_title, commit_info.commit_body)
         git.push(commit_info.branch_name)
 

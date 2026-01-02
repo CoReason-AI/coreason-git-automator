@@ -62,7 +62,6 @@ def test_generate_commit_info_http_error(deepseek_client):
     with patch("httpx.Client.post") as mock_post:
         mock_post.side_effect = httpx.HTTPStatusError("Error", request=MagicMock(), response=MagicMock())
 
-        # Patch sleep to make test fast
         with patch("tenacity.nap.time.sleep", return_value=None):
             with pytest.raises(RetryError):
                 deepseek_client.generate_commit_info("raw log")
@@ -76,6 +75,19 @@ def test_generate_commit_info_parse_error(deepseek_client):
 
         with patch("tenacity.nap.time.sleep", return_value=None):
             with pytest.raises(RetryError):
+                deepseek_client.generate_commit_info("raw log")
+
+
+def test_generate_commit_info_schema_error(deepseek_client):
+    # Missing fields
+    mock_response = {"choices": [{"message": {"content": json.dumps({"commit_title": "feat: incomplete"})}}]}
+
+    with patch("httpx.Client.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+
+        with patch("tenacity.nap.time.sleep", return_value=None):
+            with pytest.raises(RetryError):
+                # Should fail validation and retry
                 deepseek_client.generate_commit_info("raw log")
 
 

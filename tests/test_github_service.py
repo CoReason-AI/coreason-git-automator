@@ -13,6 +13,7 @@ import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tenacity import RetryError
 
 from coreason_git_automator.services.github import GitHubService
 
@@ -68,20 +69,27 @@ def test_create_pr_success(github_service):
         assert url == "https://github.com/org/repo/pull/1"
 
 
-def test_command_failure(github_service):
+def test_command_failure_retry(github_service):
+    # Test that it retries and eventually fails
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["gh"], stderr="Error message")
 
-        with pytest.raises(RuntimeError, match="GitHub CLI command failed"):
-            github_service.get_latest_run_status("branch")
+        with patch("tenacity.nap.time.sleep", return_value=None):
+            with pytest.raises(RetryError):
+                github_service.get_latest_run_status("branch")
+
+        assert mock_run.call_count >= 3
 
 
-def test_json_decode_error(github_service):
+def test_json_decode_error_retry(github_service):
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="Invalid JSON", returncode=0)
 
-        with pytest.raises(RuntimeError, match="Failed to parse GitHub CLI output"):
-            github_service.get_latest_run_status("branch")
+        with patch("tenacity.nap.time.sleep", return_value=None):
+            with pytest.raises(RetryError):
+                github_service.get_latest_run_status("branch")
+
+        assert mock_run.call_count >= 3
 
 
 def test_create_pr_no_url(github_service):
@@ -89,10 +97,16 @@ def test_create_pr_no_url(github_service):
         mock_run.return_value = MagicMock(stdout="{}", returncode=0)
 
         with pytest.raises(RuntimeError, match="Failed to retrieve PR URL"):
+            # create_pr calls _run_gh_command which succeeds (returns dict), but create_pr validation fails
+            # _run_gh_command is retried? No, it returned success.
+            # create_pr logic raises RuntimeError. This is NOT retried by tenacity on _run_gh_command.
+            # So it should raise RuntimeError directly.
             github_service.create_pr("Title", "Body", "feature")
 
 
-def test_get_run_logs_failure(github_service):
+def test_get_run_logs_failure_no_retry(github_service):
+    # get_run_logs does NOT use _run_gh_command, so it does not retry unless we add retry to it.
+    # Currently only _run_gh_command has retry.
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["gh"], stderr="Log fetch failed")
 
@@ -103,6 +117,14 @@ def test_get_run_logs_failure(github_service):
 def test_run_gh_command_empty_output(github_service):
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="  \n ", returncode=0)
+
+        result = github_service._run_gh_command(["some", "command"])
+        assert result is None
+
+
+def test_run_gh_command_empty_string(github_service):
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout="", returncode=0)
 
         result = github_service._run_gh_command(["some", "command"])
         assert result is None

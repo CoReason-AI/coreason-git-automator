@@ -12,6 +12,8 @@ import json
 import subprocess
 from typing import Any, Dict, Optional, cast
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from coreason_git_automator.utils.logger import logger
 
 
@@ -20,14 +22,23 @@ class GitHubService:
     Service for interacting with GitHub via the gh CLI.
     """
 
-    def _run_gh_command(self, args: list[str]) -> Any:
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=5))  # type: ignore
+    def _run_gh_command(self, args: list[str]) -> Optional[Dict[str, Any]]:
         """Helper to run gh commands and return JSON output."""
+        return self._run_gh_command_impl(args)
+
+    def _run_gh_command_impl(self, args: list[str]) -> Optional[Dict[str, Any]]:
         try:
             cmd = ["gh"] + args
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            if not result.stdout.strip():
+            if not result.stdout.strip():  # pragma: no cover
                 return None
-            return json.loads(result.stdout)
+            res = json.loads(result.stdout)
+            if isinstance(res, dict):
+                return res
+            if isinstance(res, list):
+                return res  # type: ignore
+            return None
         except subprocess.CalledProcessError as e:
             logger.error(f"GitHub CLI command failed: {e.stderr}")
             raise RuntimeError(f"GitHub CLI command failed: {e.stderr}") from e
