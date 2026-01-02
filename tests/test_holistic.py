@@ -232,10 +232,10 @@ def test_holistic_context_injection(mock_env, mock_boundaries, tmp_path):
                     stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 999}]),
                     returncode=0,
                 )
-            if "git" in cmd_list: # allow git log/merge/push
-                 return MagicMock(stdout="log", returncode=0)
+            if "git" in cmd_list:  # allow git log/merge/push
+                return MagicMock(stdout="log", returncode=0)
             if "gh" in cmd_list and "pr" in cmd_list:
-                 return MagicMock(stdout=json.dumps({"url": "http://pr"}), returncode=0)
+                return MagicMock(stdout=json.dumps({"url": "http://pr"}), returncode=0)
             # Jules version
             if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
                 return MagicMock(stdout="1.0.0", returncode=0)
@@ -247,7 +247,9 @@ def test_holistic_context_injection(mock_env, mock_boundaries, tmp_path):
         runner.invoke(app, ["start", "Task", "--context", str(context_file)])
 
     # Verify the Jules call contains the file content
-    jules_calls = [c for c in mock_run.call_args_list if "/usr/bin/jules" in str(c) and "remote" in str(c) and "new" in str(c)]
+    jules_calls = [
+        c for c in mock_run.call_args_list if "/usr/bin/jules" in str(c) and "remote" in str(c) and "new" in str(c)
+    ]
     assert len(jules_calls) == 1
 
     # The last argument to `jules remote new` is the prompt
@@ -275,19 +277,20 @@ def test_holistic_persistent_failure(mock_env, mock_boundaries):
 
         # Jules Version
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
-             return MagicMock(stdout="1.0.0", returncode=0)
+            return MagicMock(stdout="1.0.0", returncode=0)
 
         # GH Run Status
         if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
             if state.failures < 2:
                 state.failures += 1
                 return MagicMock(
-                    stdout=json.dumps([{"status": "completed", "conclusion": "failure", "databaseId": 100 + state.failures}]),
-                    returncode=0
+                    stdout=json.dumps(
+                        [{"status": "completed", "conclusion": "failure", "databaseId": 100 + state.failures}]
+                    ),
+                    returncode=0,
                 )
             return MagicMock(
-                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 200}]),
-                returncode=0
+                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 200}]), returncode=0
             )
 
         # GH Logs
@@ -296,8 +299,10 @@ def test_holistic_persistent_failure(mock_env, mock_boundaries):
 
         # Git/PR default
         if "git" in cmd_list or ("gh" in cmd_list and "pr" in cmd_list):
-            if "log" in cmd_list: return MagicMock(stdout="log", returncode=0)
-            if "pr" in cmd_list: return MagicMock(stdout=json.dumps({"url": "http://pr"}), returncode=0)
+            if "log" in cmd_list:
+                return MagicMock(stdout="log", returncode=0)
+            if "pr" in cmd_list:
+                return MagicMock(stdout=json.dumps({"url": "http://pr"}), returncode=0)
             return MagicMock(stdout="", returncode=0)
 
         return MagicMock(stdout="", returncode=0)
@@ -329,11 +334,13 @@ def test_holistic_merge_conflict(mock_env, mock_boundaries):
 
         # Jules Version
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
-             return MagicMock(stdout="1.0.0", returncode=0)
+            return MagicMock(stdout="1.0.0", returncode=0)
 
         # GH Success
         if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
-             return MagicMock(stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1}]), returncode=0)
+            return MagicMock(
+                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1}]), returncode=0
+            )
 
         # Git Merge -> Conflict
         if "git" in cmd_list and "merge" in cmd_list:
@@ -341,7 +348,7 @@ def test_holistic_merge_conflict(mock_env, mock_boundaries):
 
         # Git Log (needed before merge)
         if "git" in cmd_list and "log" in cmd_list:
-             return MagicMock(stdout="log", returncode=0)
+            return MagicMock(stdout="log", returncode=0)
 
         return MagicMock(stdout="", returncode=0)
 
@@ -363,27 +370,35 @@ def test_holistic_deepseek_api_failure(mock_env, mock_boundaries):
     def side_effect(args, **kwargs):
         cmd_list = args if isinstance(args, list) else args
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
-             return MagicMock(stdout="1.0.0", returncode=0)
+            return MagicMock(stdout="1.0.0", returncode=0)
         if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
-             return MagicMock(stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1}]), returncode=0)
+            return MagicMock(
+                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1}]), returncode=0
+            )
         if "git" in cmd_list and "log" in cmd_list:
-             return MagicMock(stdout="log", returncode=0)
+            return MagicMock(stdout="log", returncode=0)
         return MagicMock(stdout="", returncode=0)
 
     mock_run.side_effect = side_effect
 
     # Setup DeepSeek failure
     import httpx
+
     mock_post = mock_http.__enter__.return_value.post
     mock_post.side_effect = httpx.HTTPError("500 Server Error")
 
-    with patch("coreason_git_automator.cli.time.sleep"), patch("coreason_git_automator.services.ai.wait_exponential", return_value=0):
-         # Explicitly set catch_exceptions=True (even though it is default) to handle RetryError bubbling
-         result = runner.invoke(app, ["start", "Task"], catch_exceptions=True)
+    with (
+        patch("coreason_git_automator.cli.time.sleep"),
+        patch("coreason_git_automator.services.ai.wait_exponential", return_value=0),
+    ):
+        # Explicitly set catch_exceptions=True (even though it is default) to handle RetryError bubbling
+        result = runner.invoke(app, ["start", "Task"], catch_exceptions=True)
 
     assert result.exit_code == 1
     # Check that the error was caught and logged
     # If exit_code is 1, it might be due to the exception not being caught (handled by click)
     # OR it might be our "raise typer.Exit(code=1)"
     # We check stdout for our custom error message
-    assert "DeepSeek API error" in result.stdout or "Error: Unexpected error" in result.stdout or "Error:" in result.stdout
+    assert (
+        "DeepSeek API error" in result.stdout or "Error: Unexpected error" in result.stdout or "Error:" in result.stdout
+    )
