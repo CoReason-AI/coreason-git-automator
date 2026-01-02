@@ -8,14 +8,15 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-"""
-automates interactive vibe coding with github testing and commits.
-"""
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings
 
-__version__ = "0.1.0"
-__author__ = "Gowtham A Rao"
-__email__ = "gowtham.rao@coreason.ai"
 
-from .cli import app
-
-__all__ = ["app"]
+class AutomationConfig(BaseSettings):
+    """
+    Configuration for the Coreason Git Automator.
+    Reads from environment variables.
+    """
+    jules_api_key: SecretStr = Field(alias="JULES_API_KEY")
+    github_token: SecretStr = Field(alias="GITHUB_TOKEN")
+    deepseek_api_key: SecretStr = Field(alias="DEEPSEEK_API_KEY")

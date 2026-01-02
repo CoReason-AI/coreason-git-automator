@@ -8,9 +8,10 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-from coreason_git_automator.utils.logger import logger
+from coreason_git_automator.cli import app
 
+def main():
+    app()
 
-def hello_world() -> str:
-    logger.info("Hello World!")
-    return "Hello World!"
+if __name__ == "__main__":  # pragma: no cover
+    main()
