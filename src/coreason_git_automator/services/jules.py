@@ -15,26 +15,23 @@ from typing import List, Optional
 
 from coreason_git_automator.utils.logger import logger
 
+
 class JulesWrapper:
     """
     Wrapper around the Jules CLI.
     """
 
     def __init__(self, executable: str = "jules"):
-        self.executable = shutil.which(executable)
-        if not self.executable:
+        found = shutil.which(executable)
+        if not found:
             raise RuntimeError(f"Jules executable '{executable}' not found in PATH.")
+        self.executable: str = found
 
     def verify_version(self) -> str:
         """Verifies Jules is installed and returns version."""
         try:
-            result = subprocess.run(
-                [self.executable, "--version"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            return result.stdout.strip()
+            result = subprocess.run([self.executable, "--version"], capture_output=True, text=True, check=True)
+            return str(result.stdout.strip())
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to check Jules version: {e.stderr}")
             raise RuntimeError(f"Failed to check Jules version: {e.stderr}") from e
@@ -61,10 +58,7 @@ class JulesWrapper:
         try:
             # According to spec: "Session Start: Use subprocess to call jules remote new."
             logger.info("Starting Jules session...")
-            subprocess.run(
-                [self.executable, "remote", "new", full_prompt],
-                check=True
-            )
+            subprocess.run([self.executable, "remote", "new", full_prompt], check=True)
         except subprocess.CalledProcessError as e:
             logger.error(f"Jules session failed: {e}")
             raise RuntimeError(f"Jules session failed: {e}") from e
@@ -73,10 +67,7 @@ class JulesWrapper:
         """Sends feedback (errors) to the active Jules session."""
         msg = f"Fix the code based on these errors:\n\n{errors}"
         try:
-            subprocess.run(
-                [self.executable, "remote", "chat", msg],
-                check=True
-            )
+            subprocess.run([self.executable, "remote", "chat", msg], check=True)
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to send feedback to Jules: {e}")
             raise RuntimeError(f"Failed to send feedback to Jules: {e}") from e

@@ -17,6 +17,7 @@ class AutomationConfig(BaseSettings):
     Configuration for the Coreason Git Automator.
     Reads from environment variables.
     """
+
     jules_api_key: SecretStr = Field(alias="JULES_API_KEY")
     github_token: SecretStr = Field(alias="GITHUB_TOKEN")
     deepseek_api_key: SecretStr = Field(alias="DEEPSEEK_API_KEY")

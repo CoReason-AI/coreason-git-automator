@@ -8,10 +8,11 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-import os
 import pytest
 from pydantic import ValidationError
+
 from coreason_git_automator.config import AutomationConfig
+
 
 def test_config_valid_env():
     """Test configuration loading with valid environment variables."""
@@ -25,6 +26,7 @@ def test_config_valid_env():
         assert config.jules_api_key.get_secret_value() == "test_jules_key"
         assert config.github_token.get_secret_value() == "test_github_token"
         assert config.deepseek_api_key.get_secret_value() == "test_deepseek_key"
+
 
 def test_config_missing_env():
     """Test configuration failure when environment variables are missing."""

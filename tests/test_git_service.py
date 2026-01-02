@@ -10,12 +10,16 @@
 
 import subprocess
 from unittest.mock import MagicMock, patch
+
 import pytest
+
 from coreason_git_automator.services.git import GitClient
+
 
 @pytest.fixture
 def git_client():
     return GitClient()
+
 
 def test_run_success(git_client):
     with patch("subprocess.run") as mock_run:
@@ -26,6 +30,7 @@ def test_run_success(git_client):
         assert result == "output"
         mock_run.assert_called_once()
 
+
 def test_run_failure(git_client):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["git"], stderr="Error")
@@ -33,35 +38,42 @@ def test_run_failure(git_client):
         with pytest.raises(RuntimeError, match="Git command failed"):
             git_client.run(["status"])
 
+
 def test_checkout(git_client):
     with patch.object(git_client, "run") as mock_run:
         git_client.checkout("main")
         mock_run.assert_called_with(["checkout", "main"])
+
 
 def test_pull(git_client):
     with patch.object(git_client, "run") as mock_run:
         git_client.pull()
         mock_run.assert_called_with(["pull"])
 
+
 def test_create_branch(git_client):
     with patch.object(git_client, "run") as mock_run:
         git_client.create_branch("feature")
         mock_run.assert_called_with(["checkout", "-b", "feature"])
+
 
 def test_merge_squash(git_client):
     with patch.object(git_client, "run") as mock_run:
         git_client.merge_squash("feature")
         mock_run.assert_called_with(["merge", "--squash", "feature"])
 
+
 def test_commit(git_client):
     with patch.object(git_client, "run") as mock_run:
         git_client.commit("Title", "Body")
         mock_run.assert_called_with(["commit", "-m", "Title\n\nBody"])
 
+
 def test_push(git_client):
     with patch.object(git_client, "run") as mock_run:
         git_client.push("feature")
         mock_run.assert_called_with(["push", "-u", "origin", "feature"])
+
 
 def test_get_log_oneline(git_client):
     with patch.object(git_client, "run") as mock_run:

@@ -10,8 +10,10 @@
 
 import json
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
+
 from coreason_git_automator.utils.logger import logger
+
 
 class GitHubService:
     """
@@ -22,12 +24,7 @@ class GitHubService:
         """Helper to run gh commands and return JSON output."""
         try:
             cmd = ["gh"] + args
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             if not result.stdout.strip():
                 return None
             return json.loads(result.stdout)
@@ -43,17 +40,14 @@ class GitHubService:
         Gets the status of the latest workflow run for a branch.
         """
         # gh run list --branch <branch> --limit 1 --json status,conclusion,databaseId
-        data = self._run_gh_command([
-            "run", "list",
-            "--branch", branch,
-            "--limit", "1",
-            "--json", "status,conclusion,databaseId"
-        ])
+        data = self._run_gh_command(
+            ["run", "list", "--branch", branch, "--limit", "1", "--json", "status,conclusion,databaseId"]
+        )
 
         if not data or not isinstance(data, list) or len(data) == 0:
             return None
 
-        return data[0]
+        return cast(Dict[str, Any], data[0])
 
     def get_run_logs(self, run_id: str) -> str:
         """
@@ -62,12 +56,7 @@ class GitHubService:
         """
         try:
             cmd = ["gh", "run", "view", run_id, "--log"]
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return result.stdout
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to fetch logs: {e.stderr}")
@@ -78,14 +67,22 @@ class GitHubService:
         Creates a pull request.
         """
         # gh pr create --title <title> --body <body> --head <head> --base <base> --json url
-        data = self._run_gh_command([
-            "pr", "create",
-            "--title", title,
-            "--body", body,
-            "--head", head_branch,
-            "--base", base_branch,
-            "--json", "url"
-        ])
+        data = self._run_gh_command(
+            [
+                "pr",
+                "create",
+                "--title",
+                title,
+                "--body",
+                body,
+                "--head",
+                head_branch,
+                "--base",
+                base_branch,
+                "--json",
+                "url",
+            ]
+        )
 
         if isinstance(data, dict) and "url" in data:
             return str(data["url"])

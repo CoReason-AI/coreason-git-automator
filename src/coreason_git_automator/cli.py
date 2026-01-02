@@ -10,30 +10,31 @@
 
 import time
 from pathlib import Path
-from typing import List, Optional, Annotated
+from typing import Annotated, List, Optional
 
 import typer
 from rich.console import Console
-from rich.spinner import Spinner
 
 from coreason_git_automator.config import AutomationConfig
 from coreason_git_automator.services.ai import DeepSeekClient
+from coreason_git_automator.services.git import GitClient
 from coreason_git_automator.services.github import GitHubService
 from coreason_git_automator.services.jules import JulesWrapper
-from coreason_git_automator.services.git import GitClient
 from coreason_git_automator.utils.logger import logger
 
 app = typer.Typer(help="Coreason Git Automator - AI-driven coding assistant.")
 console = Console()
 
-@app.callback()
-def main():
+
+@app.callback()  # type: ignore
+def main() -> None:
     """
     Coreason Git Automator CLI.
     """
     pass
 
-@app.command()
+
+@app.command()  # type: ignore
 def start(
     prompt: Annotated[str, typer.Argument(help="The instruction for Jules.")],
     context: Annotated[Optional[List[Path]], typer.Option(help="Local files to inject context")] = None,
@@ -41,7 +42,7 @@ def start(
     auto_fix: Annotated[bool, typer.Option(help="Enable self-healing loop")] = True,
     base_branch: Annotated[str, typer.Option(help="Base branch to merge into")] = "main",
     jules_branch: Annotated[str, typer.Option(help="Temporary branch used by Jules")] = "jules-temp",
-):
+) -> None:
     """
     Starts an autonomous coding session.
     1. Injects context files into prompt.
@@ -117,8 +118,7 @@ def start(
 
         # Sanitize (simple filter)
         sanitized_log = "\n".join(
-            line for line in raw_log.splitlines()
-            if "jules" not in line.lower() and "Co-authored-by" not in line
+            line for line in raw_log.splitlines() if "jules" not in line.lower() and "Co-authored-by" not in line
         )
 
         # Intelligence Step
@@ -136,10 +136,7 @@ def start(
         git.push(commit_info.branch_name)
 
         pr_url = github.create_pr(
-            commit_info.commit_title,
-            commit_info.commit_body,
-            commit_info.branch_name,
-            base_branch
+            commit_info.commit_title, commit_info.commit_body, commit_info.branch_name, base_branch
         )
 
         console.print(f"[bold green]PR Created: {pr_url}[/bold green]")
@@ -147,7 +144,8 @@ def start(
     except Exception as e:
         logger.exception("Automation failed")
         console.print(f"[bold red]Error: {e}[/bold red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
+
 
 if __name__ == "__main__":
     app()  # pragma: no cover

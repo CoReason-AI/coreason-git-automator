@@ -9,7 +9,6 @@
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
 import json
-from typing import Any, Dict
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -17,6 +16,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from coreason_git_automator.config import AutomationConfig
 from coreason_git_automator.models import DeepSeekCommit
 from coreason_git_automator.utils.logger import logger
+
 
 class DeepSeekClient:
     """
@@ -27,14 +27,15 @@ class DeepSeekClient:
         self.api_key = config.deepseek_api_key.get_secret_value()
         self.base_url = "https://api.deepseek.com/v1"  # Assumed URL, adjust if needed
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))  # type: ignore
     def generate_commit_info(self, git_log: str) -> DeepSeekCommit:
         """
         Analyzes the git log and generates a conventional commit message and branch name.
         """
         system_prompt = (
             "You are a Senior Release Engineer. Analyze the provided git commit log. "
-            "Your goal is to consolidate the work into a single 'Conventional Commit' message and suggest a clean git branch name.\n"
+            "Your goal is to consolidate the work into a single 'Conventional Commit' message "
+            "and suggest a clean git branch name.\n"
             "Output purely valid JSON with no markdown formatting."
         )
 
@@ -47,7 +48,7 @@ class DeepSeekClient:
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": "deepseek-coder", # Assumed model name
+                        "model": "deepseek-coder",  # Assumed model name
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": git_log},

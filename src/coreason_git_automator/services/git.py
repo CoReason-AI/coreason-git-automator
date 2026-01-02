@@ -10,7 +10,9 @@
 
 import subprocess
 from typing import List
+
 from coreason_git_automator.utils.logger import logger
+
 
 class GitClient:
     """
@@ -21,12 +23,7 @@ class GitClient:
         """Runs a git command."""
         try:
             cmd = ["git"] + args
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
             logger.error(f"Git command failed: {e.stderr}")

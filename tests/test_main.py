@@ -9,7 +9,9 @@
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
 from unittest.mock import patch
+
 from coreason_git_automator.main import main
+
 
 def test_main():
     with patch("coreason_git_automator.main.app") as mock_app:

@@ -10,8 +10,10 @@
 
 from coreason_git_automator.cli import app
 
-def main():
+
+def main() -> None:
     app()
+
 
 if __name__ == "__main__":  # pragma: no cover
     main()

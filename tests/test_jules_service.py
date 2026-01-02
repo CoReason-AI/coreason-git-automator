@@ -11,8 +11,11 @@
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pytest
+
 from coreason_git_automator.services.jules import JulesWrapper
+
 
 @pytest.fixture
 def mock_shutil_which():
@@ -20,18 +23,22 @@ def mock_shutil_which():
         mock.return_value = "/usr/bin/jules"
         yield mock
 
+
 @pytest.fixture
 def jules_wrapper(mock_shutil_which):
     return JulesWrapper()
+
 
 def test_init_success(mock_shutil_which):
     jw = JulesWrapper()
     assert jw.executable == "/usr/bin/jules"
 
+
 def test_init_not_found():
     with patch("shutil.which", return_value=None):
         with pytest.raises(RuntimeError, match="Jules executable 'jules' not found"):
             JulesWrapper()
+
 
 def test_verify_version_success(jules_wrapper):
     with patch("subprocess.run") as mock_run:
@@ -42,6 +49,7 @@ def test_verify_version_success(jules_wrapper):
         assert version == "1.0.0"
         mock_run.assert_called_once()
 
+
 def test_verify_version_failure(jules_wrapper):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"], stderr="Error")
@@ -49,9 +57,11 @@ def test_verify_version_failure(jules_wrapper):
         with pytest.raises(RuntimeError, match="Failed to check Jules version"):
             jules_wrapper.verify_version()
 
+
 def test_prepare_prompt_no_context(jules_wrapper):
     prompt = jules_wrapper._prepare_prompt("Do something", None)
     assert prompt == "Do something"
+
 
 def test_prepare_prompt_with_context(jules_wrapper, tmp_path):
     f1 = tmp_path / "test.py"
@@ -61,6 +71,7 @@ def test_prepare_prompt_with_context(jules_wrapper, tmp_path):
 
     expected = f"[CONTEXT: {f1}]\nprint('hello')\n\n[INSTRUCTION]\nFix it"
     assert prompt == expected
+
 
 def test_prepare_prompt_read_error(jules_wrapper):
     # Mock Path.read_text to raise exception
@@ -74,6 +85,7 @@ def test_prepare_prompt_read_error(jules_wrapper):
     assert "[INSTRUCTION]" in prompt
     assert "Fix it" in prompt
 
+
 def test_run_session_success(jules_wrapper):
     with patch("subprocess.run") as mock_run:
         jules_wrapper.run_session("Prompt")
@@ -82,12 +94,14 @@ def test_run_session_success(jules_wrapper):
         args = mock_run.call_args[0][0]
         assert "remote" in args and "new" in args
 
+
 def test_run_session_failure(jules_wrapper):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"])
 
         with pytest.raises(RuntimeError, match="Jules session failed"):
             jules_wrapper.run_session("Prompt")
+
 
 def test_send_feedback_success(jules_wrapper):
     with patch("subprocess.run") as mock_run:
@@ -97,6 +111,7 @@ def test_send_feedback_success(jules_wrapper):
         args = mock_run.call_args[0][0]
         assert "remote" in args and "chat" in args
         assert "Errors found" in args[3]
+
 
 def test_send_feedback_failure(jules_wrapper):
     with patch("subprocess.run") as mock_run:
