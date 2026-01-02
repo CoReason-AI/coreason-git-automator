@@ -8,14 +8,14 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-"""
-automates interactive vibe coding with github testing and commits.
-"""
+from pydantic import BaseModel, Field
 
-__version__ = "0.1.0"
-__author__ = "Gowtham A Rao"
-__email__ = "gowtham.rao@coreason.ai"
 
-from .cli import app
+class DeepSeekCommit(BaseModel):
+    """
+    Model for the commit information returned by DeepSeek.
+    """
 
-__all__ = ["app"]
+    commit_title: str = Field(..., description="Conventional commit title")
+    commit_body: str = Field(..., description="Detailed bullet points")
+    branch_name: str = Field(..., pattern=r"^[a-z0-9/-]+$")
