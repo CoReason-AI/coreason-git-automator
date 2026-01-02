@@ -43,9 +43,13 @@ app(
 )
 ```
 
-**Injecting Context for Complex Tasks**
+**Handling Complexity and Edge Cases**
 
-For more nuanced tasks, you can inject specific file contexts to ground the AI's generation. This ensures the "Brain" (DeepSeek/Jules) has the exact local knowledge required.
+A robust automation tool must gracefully handle the messiness of real-world development. `coreason_git_automator` anticipates failure states and handles them with architectural rigor.
+
+*   **The "Infinite Loop" Fail-Safe:** While the self-healing loop is powerful, it is not allowed to run indefinitely. If the AI cannot converge on a passing solution after a configurable number of attempts (or if `git merge` encounters irresolvable conflicts), the system exits the autonomous mode. It dumps the current state, alerts the user via `rich` console output, and yields control back to the human. This ensures that the agent never burns API credits on a doomed task.
+*   **Transient Network Instability:** Leveraging `tenacity`, all interactions with the GitHub API and DeepSeek endpoints are wrapped in exponential backoff retry logic. This means a temporary 503 error from GitHub won't crash your coding session; the tool simply waits and retries, preserving the "flow" of the operation.
+*   **Context Injection for Ambiguous Tasks:** For complex refactors where "global context" is missing, the tool allows precise injection of local state. This prevents the "hallucination" edge case where the AI invents code for files it cannot see. By explicitly mounting file paths into the context, we ground the agent in reality.
 
 ```python
 from pathlib import Path
@@ -55,15 +59,18 @@ from coreason_git_automator.services.jules import JulesWrapper
 jules = JulesWrapper()
 
 # The tool accepts paths to give the AI "eyes" on the relevant code
+# This mitigates the edge case of "Context Blindness"
 context_files = [
     Path("src/auth/models.py"),
     Path("src/auth/utils.py")
 ]
 
-# The session runs, and the automator will subsequently
-# handle the git operations based on the result.
-jules.run_session(
-    prompt="Add a refresh token mechanism to the existing models.",
-    context_files=context_files
-)
+try:
+    jules.run_session(
+        prompt="Add a refresh token mechanism to the existing models.",
+        context_files=context_files
+    )
+except RuntimeError as e:
+    # If the session fails (e.g., merge conflict), catch it gracefully
+    print(f"Manual intervention required: {e}")
 ```
