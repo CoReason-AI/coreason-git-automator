@@ -81,7 +81,7 @@ def start(
                     state = run_status.get("status")
 
                     if state in ["queued", "in_progress"]:
-                        status.update(f"[bold yellow]CI is {state}...[/bold yellow]")
+                        status.update("[bold yellow]Waiting for CI...[/bold yellow]")
                         time.sleep(10)
                         continue
 
