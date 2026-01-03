@@ -57,8 +57,9 @@ def start(
         deepseek = DeepSeekClient(config)
         git = GitClient()
 
-        # 1. Verify Jules
+        # 1. Verify Dependencies
         console.print(f"[bold green]Found Jules version: {jules.verify_version()}[/bold green]")
+        console.print(f"[bold green]Found GitHub CLI version: {github.verify_installed()}[/bold green]")
 
         # 2. Start Session
         console.print("[bold blue]Starting Jules session...[/bold blue]")
