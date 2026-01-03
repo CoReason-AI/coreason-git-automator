@@ -81,6 +81,9 @@ def mock_boundaries():
 
 
 def test_holistic_happy_path(mock_env, mock_boundaries):
+    # Mock recent timestamp
+    from datetime import datetime, timezone, timedelta
+    recent_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
     """
     Simulates a full successful run where CI passes immediately.
     """
@@ -96,7 +99,7 @@ def test_holistic_happy_path(mock_env, mock_boundaries):
         # 2. GitHub Run Status
         if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
             return MagicMock(
-                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 12345}]),
+                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 12345, "createdAt": recent_time}]),
                 returncode=0,
             )
 
@@ -139,6 +142,9 @@ def test_holistic_self_healing(mock_env, mock_boundaries):
     Simulates a run where CI fails first, triggers feedback, and then passes.
     """
     mock_sub, mock_git, mock_openai = mock_boundaries
+
+    from datetime import datetime, timezone, timedelta
+    recent_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
 
     class State:
         checked_once = False
@@ -195,6 +201,9 @@ def test_holistic_merge_conflict(mock_env, mock_boundaries):
     """
     mock_sub, mock_git, mock_openai = mock_boundaries
 
+    from datetime import datetime, timezone, timedelta
+    recent_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
     # Setup git merge to fail
     mock_git.merge.side_effect = GitCommandError("merge", "conflict")
 
@@ -204,7 +213,7 @@ def test_holistic_merge_conflict(mock_env, mock_boundaries):
             return MagicMock(stdout="1.0.0", returncode=0)
         if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
             return MagicMock(
-                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1}]), returncode=0
+                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1, "createdAt": recent_time}]), returncode=0
             )
         return MagicMock(stdout="", returncode=0)
 
@@ -222,13 +231,16 @@ def test_holistic_deepseek_api_failure(mock_env, mock_boundaries):
     """
     mock_sub, mock_git, mock_openai = mock_boundaries
 
+    from datetime import datetime, timezone, timedelta
+    recent_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
     def side_effect(args, **kwargs):
         cmd_list = args if isinstance(args, list) else args
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
             return MagicMock(stdout="1.0.0", returncode=0)
         if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
             return MagicMock(
-                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1}]), returncode=0
+                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1, "createdAt": recent_time}]), returncode=0
             )
         return MagicMock(stdout="", returncode=0)
 

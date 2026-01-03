@@ -9,6 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, List, Optional
 
@@ -38,7 +39,7 @@ def main() -> None:
 def start(
     prompt: Annotated[str, typer.Argument(help="The instruction for Jules.")],
     context: Annotated[Optional[List[Path]], typer.Option(help="Local files to inject context")] = None,
-    repo: Annotated[str, typer.Option(help="Target repository path (unused currently as we run in cwd)")] = ".",
+    repo: Annotated[str, typer.Option(help="Target repository path")] = ".",
     auto_fix: Annotated[bool, typer.Option(help="Enable self-healing loop")] = True,
     base_branch: Annotated[str, typer.Option(help="Base branch to merge into")] = "main",
     jules_branch: Annotated[str, typer.Option(help="Temporary branch used by Jules")] = "jules-temp",
@@ -55,11 +56,21 @@ def start(
         jules = JulesWrapper()
         github = GitHubService()
         deepseek = DeepSeekClient(config)
-        git = GitClient()
+        git = GitClient(repo_path=repo)
 
         # 1. Verify Dependencies
         console.print(f"[bold green]Found Jules version: {jules.verify_version()}[/bold green]")
         console.print(f"[bold green]Found GitHub CLI version: {github.verify_installed()}[/bold green]")
+
+        # Capture start time to filter stale runs
+        # Use ISO format or just track the latest run ID seen at start?
+        # Better: assume any run created AFTER this moment is relevant.
+        # But GH API returns timestamps.
+        # Simpler: Get the current HEAD SHA of jules_branch if it exists.
+        # But jules remote new might push new code.
+        # Let's track the *initial* run ID if any, and ignore anything <= it?
+        # Or better: track session_start_time.
+        session_start_time = datetime.now(timezone.utc)
 
         # 2. Start Session
         console.print("[bold blue]Starting Jules session...[/bold blue]")
@@ -73,9 +84,24 @@ def start(
                     run_status = github.get_latest_run_status(jules_branch)
 
                     if not run_status:
-                        # Maybe wait for run to start?
                         time.sleep(5)
                         continue
+
+                    # Check for Stale Runs
+                    # 'createdAt': '2023-10-27T10:00:00Z'
+                    created_at_str = run_status.get("createdAt")
+                    if created_at_str:
+                         # Handle 'Z' which python < 3.11 fromisoformat handles but older might not?
+                         # gitpython/openai deps imply modern python. 3.12 is used.
+                         try:
+                             created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                             if created_at < session_start_time:
+                                 # This is an old run
+                                 status.update("[bold yellow]Waiting for new CI run...[/bold yellow]")
+                                 time.sleep(5)
+                                 continue
+                         except ValueError:
+                             pass # ignore timestamp parsing error and proceed? Or skip?
 
                     run_id = str(run_status.get("databaseId"))
                     conclusion = run_status.get("conclusion")
