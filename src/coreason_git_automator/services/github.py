@@ -9,6 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
 import json
+import shutil
 import subprocess
 from typing import Any, Dict, Optional, cast
 
@@ -21,6 +22,21 @@ class GitHubService:
     """
     Service for interacting with GitHub via the gh CLI.
     """
+
+    def __init__(self, executable: str = "gh"):
+        self.executable = executable
+
+    def verify_installed(self) -> str:
+        """Verifies gh CLI is installed and returns version."""
+        if not shutil.which(self.executable):
+            raise RuntimeError(f"GitHub CLI '{self.executable}' not found in PATH.")
+
+        try:
+            result = subprocess.run([self.executable, "--version"], capture_output=True, text=True, check=True)
+            return str(result.stdout.strip())
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to check GitHub CLI version: {e.stderr}")
+            raise RuntimeError(f"Failed to check GitHub CLI version: {e.stderr}") from e
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=5))  # type: ignore
     def _run_gh_command(self, args: list[str]) -> Optional[Dict[str, Any]]:

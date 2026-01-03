@@ -23,6 +23,33 @@ def github_service():
     return GitHubService()
 
 
+def test_verify_installed_success(github_service):
+    with patch("shutil.which", return_value="/usr/bin/gh"):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout="gh version 2.40.0 (2023-10-24)\n", returncode=0)
+
+            version = github_service.verify_installed()
+
+            assert version == "gh version 2.40.0 (2023-10-24)"
+            mock_run.assert_called_once()
+            assert mock_run.call_args[0][0] == ["gh", "--version"]
+
+
+def test_verify_installed_missing_executable(github_service):
+    with patch("shutil.which", return_value=None):
+        with pytest.raises(RuntimeError, match="GitHub CLI 'gh' not found in PATH"):
+            github_service.verify_installed()
+
+
+def test_verify_installed_command_error(github_service):
+    with patch("shutil.which", return_value="/usr/bin/gh"):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(1, ["gh", "--version"], stderr="error")
+
+            with pytest.raises(RuntimeError, match="Failed to check GitHub CLI version"):
+                github_service.verify_installed()
+
+
 def test_get_latest_run_status_success(github_service):
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(
