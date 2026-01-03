@@ -61,7 +61,13 @@ class DeepSeekClient:
                 data = response.json()
 
                 content = data["choices"][0]["message"]["content"]
-                parsed_content = json.loads(content)
+
+                if "```json" in content:
+                    content = content.replace("```json", "").replace("```", "")
+                elif "```" in content:
+                    content = content.replace("```", "")
+
+                parsed_content = json.loads(content.strip())
 
                 return DeepSeekCommit(**parsed_content)
 
