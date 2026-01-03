@@ -11,10 +11,6 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import httpx
-import pytest
-from tenacity import RetryError
-
 from coreason_git_automator.services.ai import DeepSeekClient
 
 # --- DeepSeek Complex Cases ---
