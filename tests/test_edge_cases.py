@@ -11,8 +11,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
+from openai import APIError
 from tenacity import RetryError
 
 from coreason_git_automator.services.ai import DeepSeekClient
@@ -29,7 +29,10 @@ def mock_config():
 
 @pytest.fixture
 def deepseek_client(mock_config):
-    return DeepSeekClient(mock_config)
+    with patch("coreason_git_automator.services.ai.OpenAI") as mock_openai:
+        client = DeepSeekClient(mock_config)
+        client.client = mock_openai.return_value
+        return client
 
 
 @pytest.fixture
@@ -106,39 +109,32 @@ def test_jules_run_session_large_input(jules_wrapper):
 
 def test_deepseek_rate_limit_retry(deepseek_client):
     """
-    Edge Case: HTTP 429 Too Many Requests.
-    Should retry according to tenacity config.
+    Edge Case: API Error (like 429).
     """
-    with patch("httpx.Client.post") as mock_post:
-        # Simulate 429 response
-        mock_response = MagicMock()
-        mock_response.status_code = 429
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "429 Too Many Requests", request=MagicMock(), response=mock_response
-        )
-        mock_post.return_value = mock_response
+    deepseek_client.client.chat.completions.create.side_effect = APIError("Rate limit", request=MagicMock(), body={})
 
-        # Mock sleep to avoid waiting in tests
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            # It should retry 3 times then raise RetryError
-            with pytest.raises(RetryError):
-                deepseek_client.generate_commit_info("git log")
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError):
+            deepseek_client.generate_commit_info("git log")
 
-        # Verify multiple calls were made
-        assert mock_post.call_count >= 3
+    # Check multiple calls
+    assert deepseek_client.client.chat.completions.create.call_count >= 3
 
 
 def test_deepseek_empty_response(deepseek_client):
     """
     Edge Case: API returns empty JSON body or unexpected structure.
     """
-    mock_response = {}  # completely empty
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+    # Empty content
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content=""))]
+    deepseek_client.client.chat.completions.create.return_value = mock_response
 
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                deepseek_client.generate_commit_info("git log")
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError) as exc:
+            deepseek_client.generate_commit_info("git log")
+
+    assert "Received empty content" in str(exc.value.last_attempt.exception())
 
 
 def test_deepseek_partial_json(deepseek_client):
@@ -149,53 +145,45 @@ def test_deepseek_partial_json(deepseek_client):
         "commit_title": "feat: missing others"
         # missing body and branch
     }
-    mock_response = {"choices": [{"message": {"content": str(mock_content).replace("'", '"')}}]}
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content=json.dumps(mock_content)))]
+    deepseek_client.client.chat.completions.create.return_value = mock_response
 
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
-
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                deepseek_client.generate_commit_info("git log")
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError):
+            deepseek_client.generate_commit_info("git log")
 
 
 def test_deepseek_malformed_json_string(deepseek_client):
     """
     Edge Case: The 'content' string inside the JSON response is not valid JSON.
     """
-    mock_response = {
-        "choices": [{"message": {"content": "{ 'bad': json "}}]  # Missing closing brace/quote
-    }
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content="{ 'bad': json "))]
+    deepseek_client.client.chat.completions.create.return_value = mock_response
 
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                deepseek_client.generate_commit_info("git log")
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError):
+            deepseek_client.generate_commit_info("git log")
 
 
 def test_deepseek_invalid_branch_name(deepseek_client):
     """
     Edge Case: API returns valid JSON structure, but branch name violates regex pattern.
-    The spec requires pattern r"^[a-z0-9/-]+$".
     """
     mock_content = {
         "commit_title": "feat: valid",
         "commit_body": "- valid",
         "branch_name": "Invalid Branch Name!",  # Spaces and uppercase
     }
-    mock_response = {"choices": [{"message": {"content": json.dumps(mock_content)}}]}
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content=json.dumps(mock_content)))]
+    deepseek_client.client.chat.completions.create.return_value = mock_response
 
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError) as excinfo:
+            deepseek_client.generate_commit_info("git log")
 
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError) as excinfo:
-                deepseek_client.generate_commit_info("git log")
-
-    # Check that validation error was the cause
-    # Tenacity wraps the exception in RetryError
-    # We need to access the underlying exception from the last attempt
     last_exception = excinfo.value.last_attempt.exception()
     assert last_exception is not None
     assert "Failed to parse DeepSeek response" in str(last_exception) or "Unexpected error" in str(last_exception)

@@ -8,45 +8,69 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-import subprocess
-from typing import List
+from git import GitCommandError, Repo
 
 from coreason_git_automator.utils.logger import logger
 
 
 class GitClient:
     """
-    Client for local git operations.
+    Client for local git operations using GitPython.
     """
 
-    def run(self, args: List[str]) -> str:
-        """Runs a git command."""
+    def __init__(self, repo_path: str = "."):
         try:
-            cmd = ["git"] + args
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Git command failed: {e.stderr}")
-            raise RuntimeError(f"Git command failed: {e.stderr}") from e
+            self.repo = Repo(repo_path, search_parent_directories=True)
+        except Exception as e:
+            logger.error(f"Failed to initialize Git repository: {e}")
+            raise RuntimeError(f"Failed to initialize Git repository: {e}") from e
 
     def get_log_oneline(self, branch: str) -> str:
-        return self.run(["log", "--oneline", branch])
+        try:
+            return str(self.repo.git.log("--oneline", branch))
+        except GitCommandError as e:
+            logger.error(f"Failed to get git log: {e}")
+            raise RuntimeError(f"Failed to get git log: {e}") from e
 
     def checkout(self, branch: str) -> None:
-        self.run(["checkout", branch])
+        try:
+            self.repo.git.checkout(branch)
+        except GitCommandError as e:
+            logger.error(f"Failed to checkout branch: {e}")
+            raise RuntimeError(f"Failed to checkout branch: {e}") from e
 
     def pull(self) -> None:
-        self.run(["pull"])
+        try:
+            self.repo.git.pull()
+        except GitCommandError as e:
+            logger.error(f"Failed to pull: {e}")
+            raise RuntimeError(f"Failed to pull: {e}") from e
 
     def create_branch(self, branch: str) -> None:
-        self.run(["checkout", "-b", branch])
+        try:
+            self.repo.git.checkout("-b", branch)
+        except GitCommandError as e:
+            logger.error(f"Failed to create branch: {e}")
+            raise RuntimeError(f"Failed to create branch: {e}") from e
 
     def merge_squash(self, branch: str) -> None:
-        self.run(["merge", "--squash", branch])
+        try:
+            self.repo.git.merge("--squash", branch)
+        except GitCommandError as e:
+            logger.error(f"Failed to merge squash: {e}")
+            raise RuntimeError(f"Failed to merge squash: {e}") from e
 
     def commit(self, title: str, body: str) -> None:
         message = f"{title}\n\n{body}"
-        self.run(["commit", "-m", message])
+        try:
+            self.repo.git.commit("-m", message)
+        except GitCommandError as e:
+            logger.error(f"Failed to commit: {e}")
+            raise RuntimeError(f"Failed to commit: {e}") from e
 
     def push(self, branch: str) -> None:
-        self.run(["push", "-u", "origin", branch])
+        try:
+            self.repo.git.push("-u", "origin", branch)
+        except GitCommandError as e:
+            logger.error(f"Failed to push: {e}")
+            raise RuntimeError(f"Failed to push: {e}") from e

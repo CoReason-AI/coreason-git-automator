@@ -16,6 +16,15 @@ from coreason_git_automator.services.ai import DeepSeekClient
 # --- DeepSeek Complex Cases ---
 
 
+def setup_mock_client(client_fixture):
+    # Setup standard mock for OpenAI client
+    mock_response = MagicMock()
+    # Configure default successful response
+    mock_response.choices = [MagicMock(message=MagicMock(content=""))]
+    client_fixture.client.chat.completions.create.return_value = mock_response
+    return mock_response
+
+
 def test_deepseek_markdown_stripping():
     """
     Complex Case: API returns JSON wrapped in markdown code blocks.
@@ -23,22 +32,24 @@ def test_deepseek_markdown_stripping():
     """
     mock_config = MagicMock()
     mock_config.deepseek_api_key.get_secret_value.return_value = "key"
-    client = DeepSeekClient(mock_config)
 
-    # Response with markdown
-    json_content = json.dumps(
-        {
-            "commit_title": "feat: markdown",
-            "commit_body": "- handled",
-            "branch_name": "feat/markdown-strip",
-        }
-    )
-    raw_content = f"```json\n{json_content}\n```"
+    with patch("coreason_git_automator.services.ai.OpenAI") as mock_openai:
+        client = DeepSeekClient(mock_config)
+        client.client = mock_openai.return_value
 
-    mock_response = {"choices": [{"message": {"content": raw_content}}]}
+        # Response with markdown
+        json_content = json.dumps(
+            {
+                "commit_title": "feat: markdown",
+                "commit_body": "- handled",
+                "branch_name": "feat/markdown-strip",
+            }
+        )
+        raw_content = f"```json\n{json_content}\n```"
 
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content=raw_content))]
+        client.client.chat.completions.create.return_value = mock_response
 
         result = client.generate_commit_info("log")
         assert result.branch_name == "feat/markdown-strip"
@@ -50,21 +61,23 @@ def test_deepseek_plain_code_block_stripping():
     """
     mock_config = MagicMock()
     mock_config.deepseek_api_key.get_secret_value.return_value = "key"
-    client = DeepSeekClient(mock_config)
 
-    json_content = json.dumps(
-        {
-            "commit_title": "feat: plain block",
-            "commit_body": "- handled",
-            "branch_name": "feat/plain-block",
-        }
-    )
-    raw_content = f"```\n{json_content}\n```"
+    with patch("coreason_git_automator.services.ai.OpenAI") as mock_openai:
+        client = DeepSeekClient(mock_config)
+        client.client = mock_openai.return_value
 
-    mock_response = {"choices": [{"message": {"content": raw_content}}]}
+        json_content = json.dumps(
+            {
+                "commit_title": "feat: plain block",
+                "commit_body": "- handled",
+                "branch_name": "feat/plain-block",
+            }
+        )
+        raw_content = f"```\n{json_content}\n```"
 
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content=raw_content))]
+        client.client.chat.completions.create.return_value = mock_response
 
         result = client.generate_commit_info("log")
         assert result.branch_name == "feat/plain-block"
@@ -76,17 +89,20 @@ def test_deepseek_empty_fields():
     """
     mock_config = MagicMock()
     mock_config.deepseek_api_key.get_secret_value.return_value = "key"
-    client = DeepSeekClient(mock_config)
 
-    mock_content = {
-        "commit_title": "fix: empty body",
-        "commit_body": "",  # Empty body allowed?
-        "branch_name": "fix/empty-body",
-    }
-    mock_response = {"choices": [{"message": {"content": json.dumps(mock_content)}}]}
+    with patch("coreason_git_automator.services.ai.OpenAI") as mock_openai:
+        client = DeepSeekClient(mock_config)
+        client.client = mock_openai.return_value
 
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+        mock_content = {
+            "commit_title": "fix: empty body",
+            "commit_body": "",  # Empty body allowed?
+            "branch_name": "fix/empty-body",
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content=json.dumps(mock_content)))]
+        client.client.chat.completions.create.return_value = mock_response
 
         result = client.generate_commit_info("log")
         assert result.commit_body == ""

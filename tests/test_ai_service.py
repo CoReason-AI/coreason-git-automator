@@ -11,8 +11,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
+from openai import APIError
 from tenacity import RetryError
 
 from coreason_git_automator.models import DeepSeekCommit
@@ -28,73 +28,71 @@ def mock_config():
 
 @pytest.fixture
 def deepseek_client(mock_config):
-    return DeepSeekClient(mock_config)
+    # Mock the OpenAI client creation
+    with patch("coreason_git_automator.services.ai.OpenAI") as mock_openai:
+        client = DeepSeekClient(mock_config)
+        client.client = mock_openai.return_value  # Use the mock instance
+        return client
 
 
 def test_generate_commit_info_success(deepseek_client):
-    mock_response = {
-        "choices": [
-            {
-                "message": {
-                    "content": json.dumps(
-                        {
-                            "commit_title": "feat: new feature",
-                            "commit_body": "- Implemented feature",
-                            "branch_name": "feat/new-feature",
-                        }
-                    )
-                }
-            }
-        ]
-    }
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(
+            message=MagicMock(
+                content=json.dumps(
+                    {
+                        "commit_title": "feat: new feature",
+                        "commit_body": "- Implemented feature",
+                        "branch_name": "feat/new-feature",
+                    }
+                )
+            )
+        )
+    ]
 
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+    deepseek_client.client.chat.completions.create.return_value = mock_response
 
-        result = deepseek_client.generate_commit_info("raw log")
+    result = deepseek_client.generate_commit_info("raw log")
 
-        assert isinstance(result, DeepSeekCommit)
-        assert result.commit_title == "feat: new feature"
-        assert result.branch_name == "feat/new-feature"
+    assert isinstance(result, DeepSeekCommit)
+    assert result.commit_title == "feat: new feature"
+    assert result.branch_name == "feat/new-feature"
 
 
-def test_generate_commit_info_http_error(deepseek_client):
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.side_effect = httpx.HTTPStatusError("Error", request=MagicMock(), response=MagicMock())
+def test_generate_commit_info_api_error(deepseek_client):
+    deepseek_client.client.chat.completions.create.side_effect = APIError("API Error", request=MagicMock(), body={})
 
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                deepseek_client.generate_commit_info("raw log")
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError):
+            deepseek_client.generate_commit_info("raw log")
 
 
 def test_generate_commit_info_parse_error(deepseek_client):
-    mock_response = {"choices": [{"message": {"content": "Invalid JSON"}}]}
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content="Invalid JSON"))]
+    deepseek_client.client.chat.completions.create.return_value = mock_response
 
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
-
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                deepseek_client.generate_commit_info("raw log")
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError):
+            deepseek_client.generate_commit_info("raw log")
 
 
 def test_generate_commit_info_schema_error(deepseek_client):
     # Missing fields
-    mock_response = {"choices": [{"message": {"content": json.dumps({"commit_title": "feat: incomplete"})}}]}
+    mock_response = MagicMock()
+    mock_response.choices = [MagicMock(message=MagicMock(content=json.dumps({"commit_title": "feat: incomplete"})))]
+    deepseek_client.client.chat.completions.create.return_value = mock_response
 
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
-
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                # Should fail validation and retry
-                deepseek_client.generate_commit_info("raw log")
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError):
+            # Should fail validation and retry
+            deepseek_client.generate_commit_info("raw log")
 
 
 def test_generate_commit_info_unexpected_error(deepseek_client):
-    with patch("httpx.Client.post") as mock_post:
-        mock_post.side_effect = Exception("Unexpected")
+    deepseek_client.client.chat.completions.create.side_effect = Exception("Unexpected")
 
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                deepseek_client.generate_commit_info("raw log")
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError):
+            deepseek_client.generate_commit_info("raw log")
