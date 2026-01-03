@@ -8,6 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
+import json
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -15,6 +16,7 @@ import pytest
 from tenacity import RetryError
 
 from coreason_git_automator.services.ai import DeepSeekClient
+from coreason_git_automator.services.github import GitHubService
 from coreason_git_automator.services.jules import JulesWrapper
 
 
@@ -34,6 +36,12 @@ def deepseek_client(mock_config):
 def jules_wrapper():
     with patch("shutil.which", return_value="/usr/bin/jules"):
         return JulesWrapper()
+
+
+@pytest.fixture
+def github_service():
+    with patch("shutil.which", return_value="/usr/bin/gh"):
+        return GitHubService()
 
 
 # --- JulesWrapper Edge Cases ---
@@ -56,6 +64,27 @@ def test_jules_prepare_prompt_binary_file(jules_wrapper, tmp_path):
     assert "Task" in prompt
     # The current implementation logs warning on read failure, so prompt should not have [CONTEXT: ...] for this file
     assert f"[CONTEXT: {binary_file}]" not in prompt
+
+
+def test_jules_prepare_prompt_missing_file(jules_wrapper, tmp_path):
+    """
+    Edge Case: Context file does not exist.
+    """
+    missing_file = tmp_path / "does_not_exist.py"
+    prompt = jules_wrapper._prepare_prompt("Task", [missing_file])
+    assert "[CONTEXT:" not in prompt
+    assert "[INSTRUCTION]" in prompt
+
+
+def test_jules_prepare_prompt_directory(jules_wrapper, tmp_path):
+    """
+    Edge Case: Context path is a directory.
+    """
+    dir_path = tmp_path / "somedir"
+    dir_path.mkdir()
+    prompt = jules_wrapper._prepare_prompt("Task", [dir_path])
+    assert "[CONTEXT:" not in prompt
+    assert "[INSTRUCTION]" in prompt
 
 
 def test_jules_run_session_large_input(jules_wrapper):
@@ -143,3 +172,71 @@ def test_deepseek_malformed_json_string(deepseek_client):
         with patch("tenacity.nap.time.sleep", return_value=None):
             with pytest.raises(RetryError):
                 deepseek_client.generate_commit_info("git log")
+
+
+def test_deepseek_invalid_branch_name(deepseek_client):
+    """
+    Edge Case: API returns valid JSON structure, but branch name violates regex pattern.
+    The spec requires pattern r"^[a-z0-9/-]+$".
+    """
+    mock_content = {
+        "commit_title": "feat: valid",
+        "commit_body": "- valid",
+        "branch_name": "Invalid Branch Name!",  # Spaces and uppercase
+    }
+    mock_response = {"choices": [{"message": {"content": json.dumps(mock_content)}}]}
+
+    with patch("httpx.Client.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+
+        with patch("tenacity.nap.time.sleep", return_value=None):
+            with pytest.raises(RetryError) as excinfo:
+                deepseek_client.generate_commit_info("git log")
+
+    # Check that validation error was the cause
+    # Tenacity wraps the exception in RetryError
+    # We need to access the underlying exception from the last attempt
+    last_exception = excinfo.value.last_attempt.exception()
+    assert last_exception is not None
+    assert "Failed to parse DeepSeek response" in str(last_exception) or "Unexpected error" in str(last_exception)
+
+
+# --- GitHubService Edge Cases ---
+
+
+def test_github_unexpected_json_structure(github_service):
+    """
+    Edge Case: `gh run list` returns a JSON object instead of a list.
+    """
+    with patch("subprocess.run") as mock_run:
+        # Return a dict (object) instead of list
+        mock_run.return_value = MagicMock(stdout='{"not": "a list"}', returncode=0)
+
+        # get_latest_run_status expects list
+        status = github_service.get_latest_run_status("branch")
+        assert status is None
+
+
+def test_github_list_of_empty_objects(github_service):
+    """
+    Edge Case: `gh run list` returns a list of empty objects.
+    """
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout="[{}, {}]", returncode=0)
+
+        status = github_service.get_latest_run_status("branch")
+        # Should return the first empty dict
+        assert status == {}
+
+
+def test_github_logs_unicode(github_service):
+    """
+    Edge Case: Logs contain unicode characters.
+    """
+    unicode_log = "Error: 🐛 in code\nFix it! 🚀"
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout=unicode_log, returncode=0)
+
+        logs = github_service.get_run_logs("123")
+        assert "🐛" in logs
+        assert "🚀" in logs

@@ -34,6 +34,7 @@ def mock_deps():
         mock_jules_instance.verify_version.return_value = "1.0.0"
 
         mock_github_instance = mock_github.return_value
+        mock_github_instance.verify_installed.return_value = "gh version 2.40.0"
         # Success on first try
         mock_github_instance.get_latest_run_status.return_value = {
             "status": "completed",
@@ -72,9 +73,19 @@ def test_start_success(mock_deps):
 
     assert result.exit_code == 0
     assert "Found Jules version" in result.stdout
+    assert "Found GitHub CLI version" in result.stdout
     assert "PR Created" in result.stdout
 
     mock_deps["jules"].run_session.assert_called()
+
+
+def test_start_missing_gh_cli(mock_deps):
+    mock_deps["github"].verify_installed.side_effect = RuntimeError("GitHub CLI not found")
+
+    result = runner.invoke(app, ["start", "Task"])
+
+    assert result.exit_code == 1
+    assert "Error: GitHub CLI not found" in result.stdout
 
 
 def test_start_fail_then_success(mock_deps):
