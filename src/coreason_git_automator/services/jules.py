@@ -44,7 +44,7 @@ class JulesWrapper:
         context_str = ""
         for file_path in context_files:
             try:
-                content = file_path.read_text()
+                content = file_path.read_text(encoding="utf-8")
                 context_str += f"[CONTEXT: {file_path}]\n{content}\n\n"
             except Exception as e:
                 logger.warning(f"Failed to read context file {file_path}: {e}")
