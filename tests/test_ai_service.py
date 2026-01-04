@@ -67,6 +67,25 @@ def test_generate_commit_info_http_error(deepseek_client):
                 deepseek_client.generate_commit_info("raw log")
 
 
+def test_generate_commit_info_strip_markdown(deepseek_client):
+    """Verifies that markdown code blocks are stripped from the response."""
+    dirty_json = """```json
+    {
+        "commit_title": "feat: stripped",
+        "commit_body": "- handled markdown",
+        "branch_name": "feat/stripped"
+    }
+    ```"""
+    mock_response = {"choices": [{"message": {"content": dirty_json}}]}
+
+    with patch("httpx.Client.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+
+        result = deepseek_client.generate_commit_info("raw log")
+
+        assert result.commit_title == "feat: stripped"
+
+
 def test_generate_commit_info_parse_error(deepseek_client):
     mock_response = {"choices": [{"message": {"content": "Invalid JSON"}}]}
 

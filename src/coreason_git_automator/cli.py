@@ -122,6 +122,10 @@ def start(
             line for line in raw_log.splitlines() if "jules" not in line.lower() and "Co-authored-by" not in line
         )
 
+        if not sanitized_log.strip():
+            console.print("[bold red]Empty git log after sanitization. Aborting.[/bold red]")
+            raise typer.Exit(code=1)
+
         # Intelligence Step
         console.print("[bold cyan]Consulting DeepSeek...[/bold cyan]")
         commit_info = deepseek.generate_commit_info(sanitized_log)
