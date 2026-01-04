@@ -9,6 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
 import json
+import re
 
 import httpx
 from pydantic import ValidationError
@@ -61,6 +62,10 @@ class DeepSeekClient:
                 data = response.json()
 
                 content = data["choices"][0]["message"]["content"]
+
+                # defensive logic: strip markdown code blocks if present
+                content = self._strip_markdown_code_blocks(content)
+
                 parsed_content = json.loads(content)
 
                 return DeepSeekCommit(**parsed_content)
@@ -74,3 +79,15 @@ class DeepSeekClient:
         except Exception as e:
             logger.error(f"Unexpected error in DeepSeek client: {e}")
             raise RuntimeError(f"Unexpected error in DeepSeek client: {e}") from e
+
+    def _strip_markdown_code_blocks(self, content: str) -> str:
+        """
+        Strips markdown code block delimiters from the content.
+        """
+        # Remove start of code block (e.g. ```json or ```)
+        content = re.sub(r"^```[a-zA-Z]*\n", "", content.strip())
+        # Remove end of code block
+        content = re.sub(r"\n```$", "", content.strip())
+        # Also handle inline or simple cases just in case
+        content = content.strip("`")
+        return content
