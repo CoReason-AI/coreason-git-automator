@@ -233,3 +233,31 @@ def test_cli_empty_sanitized_log(mock_deps):
 
     assert result.exit_code == 1
     assert "Empty git log after sanitization" in result.stdout
+
+
+def test_max_retries_exceeded(mock_deps):
+    """
+    Complex Case: Max retries exceeded in the self-healing loop.
+    """
+    # Simulate consecutive failures
+    mock_deps["github"].get_latest_run_status.side_effect = [
+        {"status": "completed", "conclusion": "failure", "databaseId": 1},
+        {"status": "completed", "conclusion": "failure", "databaseId": 2},
+        {"status": "completed", "conclusion": "failure", "databaseId": 3},
+        {"status": "completed", "conclusion": "failure", "databaseId": 4},  # Should not be reached/processed if max=3
+    ]
+    mock_deps["github"].get_run_logs.return_value = "Error"
+
+    # Set max_retries=3 via CLI
+    result = runner.invoke(app, ["start", "Task", "--max-retries", "3"])
+
+    assert result.exit_code == 1
+    assert "Max retries (3) exceeded" in result.stdout
+    # Should have called feedback 3 times (or slightly different depending on implementation timing)
+    # The loop check is at start of loop.
+    # Fail 1 -> count=1.
+    # Fail 2 -> count=2.
+    # Fail 3 -> count=3.
+    # Loop again -> check count >= 3 -> Exit.
+    # So 3 feedbacks sent.
+    assert mock_deps["jules"].send_feedback.call_count == 3
