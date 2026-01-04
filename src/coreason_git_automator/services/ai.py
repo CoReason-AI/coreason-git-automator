@@ -27,7 +27,7 @@ class DeepSeekClient:
 
     def __init__(self, config: AutomationConfig):
         self.api_key = config.deepseek_api_key.get_secret_value()
-        self.base_url = "https://api.deepseek.com/v1"  # Assumed URL, adjust if needed
+        self.base_url = "https://api.deepseek.com/v1"
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))  # type: ignore
     def generate_commit_info(self, git_log: str) -> DeepSeekCommit:
@@ -50,7 +50,7 @@ class DeepSeekClient:
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": "deepseek-coder",  # Assumed model name
+                        "model": "deepseek-coder",
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": git_log},
