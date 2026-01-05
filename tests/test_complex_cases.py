@@ -51,7 +51,7 @@ def mock_deps():
         patch("coreason_git_automator.cli.GitHubService") as mock_github,
         patch("coreason_git_automator.cli.DeepSeekClient") as mock_deepseek,
         patch("coreason_git_automator.cli.GitClient") as mock_git,
-        patch("coreason_git_automator.cli.time.sleep") as mock_sleep,
+        patch("coreason_git_automator.services.workflow.time.sleep") as mock_sleep,
     ):
         mock_jules_instance = mock_jules.return_value
         # verify_version -> verify_installed
