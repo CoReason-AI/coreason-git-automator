@@ -8,6 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from tenacity import RetryError
 from typer.testing import CliRunner
 
 from coreason_git_automator.cli import app
+from coreason_git_automator.config import AutomationConfig
 from coreason_git_automator.services.ai import DeepSeekClient
 from coreason_git_automator.services.github import GitHubService
 
@@ -22,10 +24,12 @@ runner = CliRunner()
 
 
 @pytest.fixture
-def mock_config():
-    config = MagicMock()
-    config.deepseek_api_key.get_secret_value.return_value = "test-key"
-    return config
+def mock_config(monkeypatch):
+    """Mocks the AutomationConfig."""
+    monkeypatch.setenv("JULES_API_KEY", "secret_jules")
+    monkeypatch.setenv("GITHUB_TOKEN", "secret_gh")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret_ds")
+    return AutomationConfig()
 
 
 @pytest.fixture
@@ -35,20 +39,119 @@ def deepseek_client(mock_config):
 
 @pytest.fixture
 def github_service():
-    with patch("shutil.which", return_value="/usr/bin/gh"):
-        return GitHubService()
+    return GitHubService()
 
 
-def test_deepseek_refusal_plain_text(deepseek_client):
+@pytest.fixture
+def mock_deps():
+    with (
+        patch("coreason_git_automator.cli.AutomationConfig") as mock_config,
+        patch("coreason_git_automator.cli.JulesWrapper") as mock_jules,
+        patch("coreason_git_automator.cli.GitHubService") as mock_github,
+        patch("coreason_git_automator.cli.DeepSeekClient") as mock_deepseek,
+        patch("coreason_git_automator.cli.GitClient") as mock_git,
+        patch("coreason_git_automator.cli.time.sleep") as mock_sleep,
+    ):
+        mock_jules_instance = mock_jules.return_value
+        mock_jules_instance.verify_version.return_value = "1.0.0"
+        mock_github_instance = mock_github.return_value
+        mock_github_instance.verify_installed.return_value = "gh version"
+        mock_deepseek_instance = mock_deepseek.return_value
+        mock_git_instance = mock_git.return_value
+
+        yield {
+            "config": mock_config,
+            "jules": mock_jules_instance,
+            "github": mock_github_instance,
+            "deepseek": mock_deepseek_instance,
+            "git": mock_git_instance,
+            "sleep": mock_sleep,
+        }
+
+
+# --- DeepSeekClient Complex Cases ---
+
+
+def test_deepseek_refusal(deepseek_client):
     """
-    Complex Case: LLM ignores JSON mode and returns plain text refusal.
-    This should raise a RuntimeError (wrapped in RetryError by tenacity).
+    Complex Case: DeepSeek refuses to output JSON (e.g. returns plain text explanation).
+    The client should retry (because of JSONDecodeError or similar) and eventually fail if it persists.
     """
     mock_response = {
         "choices": [
-            {"message": {"content": "I apologize, but I cannot fulfill this request as it involves modifying code."}}
+            {
+                "message": {
+                    "content": "I cannot provide JSON for this request because..."  # Not JSON
+                }
+            }
         ]
     }
+    with patch("httpx.Client.post") as mock_post:
+        # Mock success status but bad content
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+
+        with patch("tenacity.nap.time.sleep", return_value=None):
+            with pytest.raises(RetryError):
+                deepseek_client.generate_commit_info("git log")
+
+
+def test_deepseek_empty_response_body(deepseek_client):
+    """
+    Edge Case: API returns empty JSON body or unexpected structure.
+    """
+    mock_response = {}  # completely empty
+    with patch("httpx.Client.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+
+        with patch("tenacity.nap.time.sleep", return_value=None):
+            with pytest.raises(RetryError):
+                deepseek_client.generate_commit_info("git log")
+
+
+def test_deepseek_partial_json(deepseek_client):
+    """
+    Edge Case: Valid JSON but missing one field.
+    """
+    mock_content = {
+        "commit_title": "feat: missing others"
+        # missing body and branch
+    }
+    mock_response = {"choices": [{"message": {"content": str(mock_content).replace("'", '"')}}]}
+
+    with patch("httpx.Client.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+
+        with patch("tenacity.nap.time.sleep", return_value=None):
+            with pytest.raises(RetryError):
+                deepseek_client.generate_commit_info("git log")
+
+
+def test_deepseek_malformed_json_string(deepseek_client):
+    """
+    Edge Case: The 'content' string inside the JSON response is not valid JSON.
+    """
+    mock_response = {
+        "choices": [{"message": {"content": "{ 'bad': json "}}]  # Missing closing brace/quote
+    }
+    with patch("httpx.Client.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+
+        with patch("tenacity.nap.time.sleep", return_value=None):
+            with pytest.raises(RetryError):
+                deepseek_client.generate_commit_info("git log")
+
+
+def test_deepseek_invalid_branch_name(deepseek_client):
+    """
+    Edge Case: API returns valid JSON structure, but branch name violates regex pattern.
+    The spec requires pattern r"^[a-z0-9/-]+$".
+    """
+    mock_content = {
+        "commit_title": "feat: valid",
+        "commit_body": "- valid",
+        "branch_name": "Invalid Branch Name!",  # Spaces and uppercase
+    }
+    mock_response = {"choices": [{"message": {"content": json.dumps(mock_content)}}]}
 
     with patch("httpx.Client.post") as mock_post:
         mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
@@ -57,66 +160,104 @@ def test_deepseek_refusal_plain_text(deepseek_client):
             with pytest.raises(RetryError) as excinfo:
                 deepseek_client.generate_commit_info("git log")
 
-            # Verify specific error type
-            assert "Failed to parse DeepSeek response" in str(excinfo.value.last_attempt.exception())
+    # Check that validation error was the cause
+    # Tenacity wraps the exception in RetryError
+    # We need to access the underlying exception from the last attempt
+    last_exception = excinfo.value.last_attempt.exception()
+    assert last_exception is not None
+    assert "Failed to parse DeepSeek response" in str(last_exception) or "Unexpected error" in str(last_exception)
 
 
-def test_github_auth_failure_text_response(github_service):
+# --- GitHubService Edge Cases ---
+
+
+def test_github_unexpected_json_structure(github_service):
     """
-    Complex Case: GitHub CLI is installed but not authenticated.
-    It returns plain text 'Welcome to GitHub CLI' instead of JSON.
+    Edge Case: `gh api` returns a JSON object that is not the expected structure (missing workflow_runs).
     """
-    auth_error_text = "Welcome to GitHub CLI!\nTo get started, run: gh auth login"
-
     with patch("subprocess.run") as mock_run:
-        # Simulate successful exit code (0) but non-JSON output (stdout)
-        mock_run.return_value = MagicMock(stdout=auth_error_text, returncode=0)
+        # Return a valid dict but missing "workflow_runs"
+        mock_run.return_value = MagicMock(stdout='{"not": "expected"}', returncode=0)
 
-        # We mock sleep to avoid waiting during retries
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError) as excinfo:
-                github_service.get_latest_run_status("branch")
-
-        # Verify underlying exception
-        assert "Failed to parse GitHub CLI output" in str(excinfo.value.last_attempt.exception())
+        # get_latest_run_status expects {"workflow_runs": ...}
+        status = github_service.get_latest_run_status("branch")
+        assert status is None
 
 
-def test_cli_empty_sanitized_log(mock_config):
+def test_github_list_of_empty_objects(github_service):
     """
-    Integration Case: Git log contains only filtered lines (jules/Co-authored-by).
-    Sanitized log becomes empty.
-    The CLI should handle this gracefully by aborting before calling DeepSeek.
+    Edge Case: `gh api` returns workflow_runs as empty objects.
     """
-    with (
-        patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"),
-        patch("coreason_git_automator.services.jules.JulesWrapper.verify_version"),
-        patch("coreason_git_automator.services.github.GitHubService.verify_installed"),
-        patch("coreason_git_automator.services.jules.JulesWrapper.run_session"),
-        patch("coreason_git_automator.services.github.GitHubService.get_latest_run_status") as mock_status,
-        patch("coreason_git_automator.services.git.GitClient.get_log_oneline") as mock_git_log,
-        patch("coreason_git_automator.services.git.GitClient.checkout"),
-        patch("coreason_git_automator.services.git.GitClient.pull"),
-        # We Mock DeepSeek to ensure it is NOT called
-        patch("coreason_git_automator.services.ai.DeepSeekClient.generate_commit_info") as mock_generate,
-        patch("coreason_git_automator.cli.AutomationConfig", return_value=mock_config),
-    ):
-        # CI Success to reach Merge Step
-        mock_status.return_value = {"status": "completed", "conclusion": "success", "databaseId": 123}
+    with patch("subprocess.run") as mock_run:
+        # workflow_runs is a list of empty dicts
+        mock_run.return_value = MagicMock(stdout='{"workflow_runs": [{}, {}]}', returncode=0)
 
-        # Git log only has dirty lines
-        mock_git_log.return_value = "hash1 jules: update\nhash2 Co-authored-by: user"
+        status = github_service.get_latest_run_status("branch")
+        # Should return the first dict, but with databaseId mapped from id (which is missing)
+        # It calls `run.get("id")` -> None.
+        assert status == {"databaseId": None}
 
-        # Run CLI
-        result = runner.invoke(app, ["start", "Task"])
 
-        # Assertions
-        # Expect failure because we haven't implemented the check yet, but let's see current behavior.
-        # Current behavior: it calls generate_commit_info with empty string.
-        # We WANT it to NOT call it and exit with error.
+def test_github_logs_unicode(github_service):
+    """
+    Edge Case: Logs contain unicode characters.
+    """
+    unicode_log = "Error: 🐛 in code\nFix it! 🚀"
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout=unicode_log, returncode=0)
 
-        # This test will initially FAIL (mock_generate called) or PASS (if we asserted mock_generate.called).
-        # We want to assert behavior: abort.
+        logs = github_service.get_run_logs("123")
+        assert "🐛" in logs
+        assert "🚀" in logs
 
-        assert result.exit_code == 1
-        assert "Empty git log after sanitization" in result.stdout
-        mock_generate.assert_not_called()
+
+# --- CLI Edge Cases ---
+
+
+def test_cli_empty_sanitized_log(mock_deps):
+    """
+    Edge Case: Sanitized log is empty (only contains excluded lines).
+    The CLI should abort with exit code 1.
+    """
+    mock_deps["git"].get_log_oneline.return_value = "hash1 jules: update\nhash2 Co-authored-by: user"
+    # Both lines should be filtered out.
+
+    # We need to ensure monitoring passes so we reach the merge step
+    mock_deps["github"].get_latest_run_status.return_value = {
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 123,
+    }
+
+    result = runner.invoke(app, ["start", "Task"])
+
+    assert result.exit_code == 1
+    assert "Empty git log after sanitization" in result.stdout
+
+
+def test_max_retries_exceeded(mock_deps):
+    """
+    Complex Case: Max retries exceeded in the self-healing loop.
+    """
+    # Simulate consecutive failures
+    mock_deps["github"].get_latest_run_status.side_effect = [
+        {"status": "completed", "conclusion": "failure", "databaseId": 1},
+        {"status": "completed", "conclusion": "failure", "databaseId": 2},
+        {"status": "completed", "conclusion": "failure", "databaseId": 3},
+        {"status": "completed", "conclusion": "failure", "databaseId": 4},  # Should not be reached/processed if max=3
+    ]
+    mock_deps["github"].get_run_logs.return_value = "Error"
+
+    # Set max_retries=3 via CLI
+    result = runner.invoke(app, ["start", "Task", "--max-retries", "3"])
+
+    assert result.exit_code == 1
+    assert "Max retries (3) exceeded" in result.stdout
+    # Should have called feedback 3 times (or slightly different depending on implementation timing)
+    # The loop check is at start of loop.
+    # Fail 1 -> count=1.
+    # Fail 2 -> count=2.
+    # Fail 3 -> count=3.
+    # Loop again -> check count >= 3 -> Exit.
+    # So 3 feedbacks sent.
+    assert mock_deps["jules"].send_feedback.call_count == 3

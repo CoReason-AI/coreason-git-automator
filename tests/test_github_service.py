@@ -51,22 +51,25 @@ def test_verify_installed_command_error(github_service):
 
 
 def test_get_latest_run_status_success(github_service):
+    # Mocking `gh api ...` response structure
+    mock_response = {"workflow_runs": [{"id": 123, "status": "completed", "conclusion": "success"}]}
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(
-            stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 123}]), returncode=0
-        )
+        mock_run.return_value = MagicMock(stdout=json.dumps(mock_response), returncode=0)
 
         status = github_service.get_latest_run_status("feature-branch")
 
-        assert status == {"status": "completed", "conclusion": "success", "databaseId": 123}
+        assert status == {"id": 123, "status": "completed", "conclusion": "success", "databaseId": 123}
         mock_run.assert_called_once()
         args = mock_run.call_args[0][0]
-        assert "gh" in args and "run" in args and "list" in args
+        # Should call `gh api ...`
+        assert "gh" in args and "api" in args
+        assert any("actions/runs" in arg for arg in args)
 
 
 def test_get_latest_run_status_no_runs(github_service):
+    mock_response = {"workflow_runs": []}
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(stdout="[]", returncode=0)
+        mock_run.return_value = MagicMock(stdout=json.dumps(mock_response), returncode=0)
 
         status = github_service.get_latest_run_status("new-branch")
 
@@ -86,14 +89,19 @@ def test_get_run_logs_success(github_service):
 
 
 def test_create_pr_success(github_service):
+    mock_response = {"html_url": "https://github.com/org/repo/pull/1"}
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(
-            stdout=json.dumps({"url": "https://github.com/org/repo/pull/1"}), returncode=0
-        )
+        mock_run.return_value = MagicMock(stdout=json.dumps(mock_response), returncode=0)
 
         url = github_service.create_pr("Title", "Body", "feature", "main")
 
         assert url == "https://github.com/org/repo/pull/1"
+        mock_run.assert_called_once()
+        # Ensure input was passed via stdin
+        assert mock_run.call_args.kwargs["input"] is not None
+        payload = json.loads(mock_run.call_args.kwargs["input"])
+        assert payload["title"] == "Title"
+        assert payload["body"] == "Body"
 
 
 def test_command_failure_retry(github_service):
@@ -124,16 +132,11 @@ def test_create_pr_no_url(github_service):
         mock_run.return_value = MagicMock(stdout="{}", returncode=0)
 
         with pytest.raises(RuntimeError, match="Failed to retrieve PR URL"):
-            # create_pr calls _run_gh_command which succeeds (returns dict), but create_pr validation fails
-            # _run_gh_command is retried? No, it returned success.
-            # create_pr logic raises RuntimeError. This is NOT retried by tenacity on _run_gh_command.
-            # So it should raise RuntimeError directly.
+            # create_pr calls subprocess directly now, so exception is raised directly
             github_service.create_pr("Title", "Body", "feature")
 
 
 def test_get_run_logs_failure_no_retry(github_service):
-    # get_run_logs does NOT use _run_gh_command, so it does not retry unless we add retry to it.
-    # Currently only _run_gh_command has retry.
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["gh"], stderr="Log fetch failed")
 
@@ -150,6 +153,9 @@ def test_run_gh_command_empty_output(github_service):
 
 
 def test_run_gh_command_primitive(github_service):
+    # If API returns a primitive like true/false/null, current impl returns None for not-dict/not-list
+    # Except list is returned.
+    # json.loads("true") -> True (bool)
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="true", returncode=0)
 
@@ -163,3 +169,33 @@ def test_run_gh_command_empty_string(github_service):
 
         result = github_service._run_gh_command(["some", "command"])
         assert result is None
+
+
+def test_run_gh_command_returns_list(github_service):
+    """
+    Cover line 60: return res (when list)
+    """
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout="[1, 2]", returncode=0)
+        result = github_service._run_gh_command(["some", "command"])
+        assert result == [1, 2]
+
+
+def test_create_pr_process_error(github_service):
+    """
+    Cover line 165-166: CalledProcessError in create_pr
+    """
+    with patch("subprocess.run") as mock_run:
+        mock_run.side_effect = subprocess.CalledProcessError(1, ["gh"], stderr="Failed")
+        with pytest.raises(RuntimeError, match="GitHub CLI command failed: Failed"):
+            github_service.create_pr("t", "b", "h")
+
+
+def test_create_pr_json_error(github_service):
+    """
+    Cover line 168-169: JSONDecodeError in create_pr
+    """
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(stdout="Invalid JSON", returncode=0)
+        with pytest.raises(RuntimeError, match="Failed to parse GitHub CLI output"):
+            github_service.create_pr("t", "b", "h")

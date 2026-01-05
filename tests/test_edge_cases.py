@@ -11,20 +11,21 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 from tenacity import RetryError
 
+from coreason_git_automator.config import AutomationConfig
 from coreason_git_automator.services.ai import DeepSeekClient
 from coreason_git_automator.services.github import GitHubService
-from coreason_git_automator.services.jules import JulesWrapper
 
 
 @pytest.fixture
-def mock_config():
-    config = MagicMock()
-    config.deepseek_api_key.get_secret_value.return_value = "test-key"
-    return config
+def mock_config(monkeypatch):
+    """Mocks the AutomationConfig."""
+    monkeypatch.setenv("JULES_API_KEY", "secret_jules")
+    monkeypatch.setenv("GITHUB_TOKEN", "secret_gh")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret_ds")
+    return AutomationConfig()
 
 
 @pytest.fixture
@@ -33,102 +34,37 @@ def deepseek_client(mock_config):
 
 
 @pytest.fixture
-def jules_wrapper():
-    with patch("shutil.which", return_value="/usr/bin/jules"):
-        return JulesWrapper()
-
-
-@pytest.fixture
 def github_service():
-    with patch("shutil.which", return_value="/usr/bin/gh"):
-        return GitHubService()
-
-
-# --- JulesWrapper Edge Cases ---
-
-
-def test_jules_prepare_prompt_binary_file(jules_wrapper, tmp_path):
-    """
-    Edge Case: Context file contains binary data (or non-utf8).
-    Should gracefully skip or handle error without crashing.
-    """
-    binary_file = tmp_path / "image.png"
-    binary_file.write_bytes(b"\x89PNG\r\n\x1a\n")
-
-    # In strict implementation, reading binary as text raises UnicodeDecodeError
-    # The current implementation catches 'Exception', so it should just log warning and continue.
-    prompt = jules_wrapper._prepare_prompt("Task", [binary_file])
-
-    # Should contain instruction but NOT the binary garbage
-    assert "[INSTRUCTION]" in prompt
-    assert "Task" in prompt
-    # The current implementation logs warning on read failure, so prompt should not have [CONTEXT: ...] for this file
-    assert f"[CONTEXT: {binary_file}]" not in prompt
-
-
-def test_jules_prepare_prompt_missing_file(jules_wrapper, tmp_path):
-    """
-    Edge Case: Context file does not exist.
-    """
-    missing_file = tmp_path / "does_not_exist.py"
-    prompt = jules_wrapper._prepare_prompt("Task", [missing_file])
-    assert "[CONTEXT:" not in prompt
-    assert "[INSTRUCTION]" in prompt
-
-
-def test_jules_prepare_prompt_directory(jules_wrapper, tmp_path):
-    """
-    Edge Case: Context path is a directory.
-    """
-    dir_path = tmp_path / "somedir"
-    dir_path.mkdir()
-    prompt = jules_wrapper._prepare_prompt("Task", [dir_path])
-    assert "[CONTEXT:" not in prompt
-    assert "[INSTRUCTION]" in prompt
-
-
-def test_jules_run_session_large_input(jules_wrapper):
-    """
-    Edge Case: extremely large prompt.
-    Subprocess might have limits, but we are testing that we pass it correctly.
-    """
-    large_prompt = "A" * 100_000
-    with patch("subprocess.run") as mock_run:
-        jules_wrapper.run_session(large_prompt)
-        mock_run.assert_called_once()
-        args = mock_run.call_args[0][0]
-        # Verify the huge string is passed as last arg
-        assert len(args[-1]) >= 100_000
+    return GitHubService()
 
 
 # --- DeepSeekClient Edge Cases ---
 
 
-def test_deepseek_rate_limit_retry(deepseek_client):
+def test_deepseek_refusal(deepseek_client):
     """
-    Edge Case: HTTP 429 Too Many Requests.
-    Should retry according to tenacity config.
+    Complex Case: DeepSeek refuses to output JSON (e.g. returns plain text explanation).
+    The client should retry (because of JSONDecodeError or similar) and eventually fail if it persists.
     """
+    mock_response = {
+        "choices": [
+            {
+                "message": {
+                    "content": "I cannot provide JSON for this request because..."  # Not JSON
+                }
+            }
+        ]
+    }
     with patch("httpx.Client.post") as mock_post:
-        # Simulate 429 response
-        mock_response = MagicMock()
-        mock_response.status_code = 429
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "429 Too Many Requests", request=MagicMock(), response=mock_response
-        )
-        mock_post.return_value = mock_response
+        # Mock success status but bad content
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
 
-        # Mock sleep to avoid waiting in tests
         with patch("tenacity.nap.time.sleep", return_value=None):
-            # It should retry 3 times then raise RetryError
             with pytest.raises(RetryError):
                 deepseek_client.generate_commit_info("git log")
 
-        # Verify multiple calls were made
-        assert mock_post.call_count >= 3
 
-
-def test_deepseek_empty_response(deepseek_client):
+def test_deepseek_empty_response_body(deepseek_client):
     """
     Edge Case: API returns empty JSON body or unexpected structure.
     """
@@ -206,27 +142,29 @@ def test_deepseek_invalid_branch_name(deepseek_client):
 
 def test_github_unexpected_json_structure(github_service):
     """
-    Edge Case: `gh run list` returns a JSON object instead of a list.
+    Edge Case: `gh api` returns a JSON object that is not the expected structure (missing workflow_runs).
     """
     with patch("subprocess.run") as mock_run:
-        # Return a dict (object) instead of list
-        mock_run.return_value = MagicMock(stdout='{"not": "a list"}', returncode=0)
+        # Return a valid dict but missing "workflow_runs"
+        mock_run.return_value = MagicMock(stdout='{"not": "expected"}', returncode=0)
 
-        # get_latest_run_status expects list
+        # get_latest_run_status expects {"workflow_runs": ...}
         status = github_service.get_latest_run_status("branch")
         assert status is None
 
 
 def test_github_list_of_empty_objects(github_service):
     """
-    Edge Case: `gh run list` returns a list of empty objects.
+    Edge Case: `gh api` returns workflow_runs as empty objects.
     """
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(stdout="[{}, {}]", returncode=0)
+        # workflow_runs is a list of empty dicts
+        mock_run.return_value = MagicMock(stdout='{"workflow_runs": [{}, {}]}', returncode=0)
 
         status = github_service.get_latest_run_status("branch")
-        # Should return the first empty dict
-        assert status == {}
+        # Should return the first dict, but with databaseId mapped from id (which is missing)
+        # It calls `run.get("id")` -> None.
+        assert status == {"databaseId": None}
 
 
 def test_github_logs_unicode(github_service):

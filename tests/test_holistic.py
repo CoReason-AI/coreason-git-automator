@@ -85,11 +85,12 @@ def test_holistic_happy_path(mock_env, mock_boundaries):
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
             return MagicMock(stdout="1.0.0", returncode=0)
 
-        # 2. GitHub Run Status
-        if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
+        # 2. GitHub Run Status (Updated to gh api)
+        if "gh" in cmd_list and "api" in cmd_list and any("actions/runs" in a for a in cmd_list):
             # Simulate Success immediately
+            # The code expects {"workflow_runs": [{"id": ..., "status": ..., "conclusion": ...}]}
             return MagicMock(
-                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 12345}]),
+                stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success", "id": 12345}]}),
                 returncode=0,
             )
 
@@ -97,10 +98,11 @@ def test_holistic_happy_path(mock_env, mock_boundaries):
         if "git" in cmd_list and "log" in cmd_list:
             return MagicMock(stdout="hash1 feat: wip\nhash2 fix: bug", returncode=0)
 
-        # 4. GitHub PR Create
-        if "gh" in cmd_list and "pr" in cmd_list and "create" in cmd_list:
+        # 4. GitHub PR Create (Updated to gh api)
+        if "gh" in cmd_list and "api" in cmd_list and any("pulls" in a for a in cmd_list) and "--method" in cmd_list:
+            # The code passes input via stdin, and expects response with html_url
             return MagicMock(
-                stdout=json.dumps({"url": "https://github.com/org/repo/pull/1"}),
+                stdout=json.dumps({"html_url": "https://github.com/org/repo/pull/1"}),
                 returncode=0,
             )
 
@@ -150,23 +152,23 @@ def test_holistic_self_healing(mock_env, mock_boundaries):
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
             return MagicMock(stdout="1.0.0", returncode=0)
 
-        # 2. GitHub Run Status
-        if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
+        # 2. GitHub Run Status (API)
+        if "gh" in cmd_list and "api" in cmd_list and any("actions/runs" in a for a in cmd_list):
             if not state.checked_once:
                 state.checked_once = True
                 # Fail first time
                 return MagicMock(
-                    stdout=json.dumps([{"status": "completed", "conclusion": "failure", "databaseId": 111}]),
+                    stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "failure", "id": 111}]}),
                     returncode=0,
                 )
             else:
                 # Success second time
                 return MagicMock(
-                    stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 222}]),
+                    stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success", "id": 222}]}),
                     returncode=0,
                 )
 
-        # 3. GitHub Run Logs
+        # 3. GitHub Run Logs (gh run view is still used)
         if "gh" in cmd_list and "run" in cmd_list and "view" in cmd_list:
             return MagicMock(stdout="Error: SyntaxError on line 10\n" * 10, returncode=0)
 
@@ -178,10 +180,10 @@ def test_holistic_self_healing(mock_env, mock_boundaries):
         if "git" in cmd_list and "log" in cmd_list:
             return MagicMock(stdout="hash1 fix: syntax", returncode=0)
 
-        # 6. GitHub PR Create
-        if "gh" in cmd_list and "pr" in cmd_list and "create" in cmd_list:
+        # 6. GitHub PR Create (API)
+        if "gh" in cmd_list and "api" in cmd_list and any("pulls" in a for a in cmd_list):
             return MagicMock(
-                stdout=json.dumps({"url": "https://github.com/org/repo/pull/2"}),
+                stdout=json.dumps({"html_url": "https://github.com/org/repo/pull/2"}),
                 returncode=0,
             )
 
@@ -227,15 +229,20 @@ def test_holistic_context_injection(mock_env, mock_boundaries, tmp_path):
         # So we mock a quick success.
         def side_effect_complete(args, **kwargs):
             cmd_list = args if isinstance(args, list) else args
-            if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
+            # GH Status
+            if "gh" in cmd_list and "api" in cmd_list and any("actions/runs" in a for a in cmd_list):
                 return MagicMock(
-                    stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 999}]),
+                    stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success", "id": 999}]}),
                     returncode=0,
                 )
             if "git" in cmd_list:  # allow git log/merge/push
                 return MagicMock(stdout="log", returncode=0)
-            if "gh" in cmd_list and "pr" in cmd_list:
-                return MagicMock(stdout=json.dumps({"url": "http://pr"}), returncode=0)
+            # GH PR
+            if "gh" in cmd_list and "api" in cmd_list and any("pulls" in a for a in cmd_list):
+                return MagicMock(
+                    stdout=json.dumps({"html_url": "http://pr"}),
+                    returncode=0,
+                )
             # Jules version
             if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
                 return MagicMock(stdout="1.0.0", returncode=0)
@@ -280,17 +287,22 @@ def test_holistic_persistent_failure(mock_env, mock_boundaries):
             return MagicMock(stdout="1.0.0", returncode=0)
 
         # GH Run Status
-        if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
+        if "gh" in cmd_list and "api" in cmd_list and any("actions/runs" in a for a in cmd_list):
             if state.failures < 2:
                 state.failures += 1
                 return MagicMock(
                     stdout=json.dumps(
-                        [{"status": "completed", "conclusion": "failure", "databaseId": 100 + state.failures}]
+                        {
+                            "workflow_runs": [
+                                {"status": "completed", "conclusion": "failure", "id": 100 + state.failures}
+                            ]
+                        }
                     ),
                     returncode=0,
                 )
             return MagicMock(
-                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 200}]), returncode=0
+                stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success", "id": 200}]}),
+                returncode=0,
             )
 
         # GH Logs
@@ -298,12 +310,16 @@ def test_holistic_persistent_failure(mock_env, mock_boundaries):
             return MagicMock(stdout="Error log...", returncode=0)
 
         # Git/PR default
-        if "git" in cmd_list or ("gh" in cmd_list and "pr" in cmd_list):
+        if "git" in cmd_list:
             if "log" in cmd_list:
                 return MagicMock(stdout="log", returncode=0)
-            if "pr" in cmd_list:
-                return MagicMock(stdout=json.dumps({"url": "http://pr"}), returncode=0)
             return MagicMock(stdout="", returncode=0)
+
+        if "gh" in cmd_list and "api" in cmd_list and any("pulls" in a for a in cmd_list):
+            return MagicMock(
+                stdout=json.dumps({"html_url": "http://pr"}),
+                returncode=0,
+            )
 
         return MagicMock(stdout="", returncode=0)
 
@@ -337,9 +353,10 @@ def test_holistic_merge_conflict(mock_env, mock_boundaries):
             return MagicMock(stdout="1.0.0", returncode=0)
 
         # GH Success
-        if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
+        if "gh" in cmd_list and "api" in cmd_list and any("actions/runs" in a for a in cmd_list):
             return MagicMock(
-                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1}]), returncode=0
+                stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success", "id": 1}]}),
+                returncode=0,
             )
 
         # Git Merge -> Conflict
@@ -371,9 +388,10 @@ def test_holistic_deepseek_api_failure(mock_env, mock_boundaries):
         cmd_list = args if isinstance(args, list) else args
         if "/usr/bin/jules" in cmd_list and "--version" in cmd_list:
             return MagicMock(stdout="1.0.0", returncode=0)
-        if "gh" in cmd_list and "run" in cmd_list and "list" in cmd_list:
+        if "gh" in cmd_list and "api" in cmd_list and any("actions/runs" in a for a in cmd_list):
             return MagicMock(
-                stdout=json.dumps([{"status": "completed", "conclusion": "success", "databaseId": 1}]), returncode=0
+                stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success", "id": 1}]}),
+                returncode=0,
             )
         if "git" in cmd_list and "log" in cmd_list:
             return MagicMock(stdout="log", returncode=0)
