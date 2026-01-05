@@ -9,34 +9,22 @@
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
 import json
-import shutil
 from typing import Any, Dict, Optional, cast
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from coreason_git_automator.services.base import ExternalTool
 from coreason_git_automator.utils.logger import logger
 from coreason_git_automator.utils.process import run_command
 
 
-class GitHubService:
+class GitHubService(ExternalTool):
     """
     Service for interacting with GitHub via the gh CLI.
     """
 
-    def __init__(self, executable: str = "gh"):
-        self.executable = executable
-
-    def verify_installed(self) -> str:
-        """Verifies gh CLI is installed and returns version."""
-        if not shutil.which(self.executable):
-            raise RuntimeError(f"GitHub CLI '{self.executable}' not found in PATH.")
-
-        try:
-            return run_command([self.executable, "--version"])
-        except RuntimeError as e:
-            # Re-wrap or log specifically if needed, but generic is fine.
-            logger.error(f"Failed to check GitHub CLI version: {e}")
-            raise
+    def __init__(self, executable: str = "gh") -> None:
+        super().__init__(executable)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=5))  # type: ignore
     def _run_gh_command(self, args: list[str]) -> Optional[Dict[str, Any]]:

@@ -35,7 +35,8 @@ def deepseek_client(mock_config):
 
 @pytest.fixture
 def github_service():
-    return GitHubService()
+    with patch("shutil.which", return_value="/usr/bin/gh"):
+        return GitHubService()
 
 
 # --- DeepSeekClient Edge Cases ---

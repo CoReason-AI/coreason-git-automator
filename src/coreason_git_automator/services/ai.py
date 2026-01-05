@@ -10,7 +10,7 @@
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from pydantic import ValidationError
@@ -18,6 +18,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from coreason_git_automator.config import AutomationConfig
 from coreason_git_automator.models import DeepSeekCommit
+from coreason_git_automator.prompts import DEEPSEEK_SYSTEM_PROMPT
 from coreason_git_automator.utils.logger import logger
 
 
@@ -26,7 +27,7 @@ class DeepSeekClient:
     Client for interacting with the DeepSeek API.
     """
 
-    def __init__(self, config: AutomationConfig):
+    def __init__(self, config: AutomationConfig) -> None:
         self.api_key = config.deepseek_api_key.get_secret_value()
         self.base_url = "https://api.deepseek.com/v1"
 
@@ -35,13 +36,6 @@ class DeepSeekClient:
         """
         Analyzes the git log and generates a conventional commit message and branch name.
         """
-        system_prompt = (
-            "You are a Senior Release Engineer. Analyze the provided git commit log. "
-            "Your goal is to consolidate the work into a single 'Conventional Commit' message "
-            "and suggest a clean git branch name.\n"
-            "Output purely valid JSON with no markdown formatting."
-        )
-
         try:
             with httpx.Client(timeout=30.0) as client:
                 response = client.post(
@@ -53,7 +47,7 @@ class DeepSeekClient:
                     json={
                         "model": "deepseek-coder",
                         "messages": [
-                            {"role": "system", "content": system_prompt},
+                            {"role": "system", "content": DEEPSEEK_SYSTEM_PROMPT},
                             {"role": "user", "content": git_log},
                         ],
                         "response_format": {"type": "json_object"},
@@ -91,7 +85,7 @@ class DeepSeekClient:
 
         # 2. Try direct parse
         try:
-            return dict(json.loads(content))
+            return cast(dict[str, Any], json.loads(content))
         except json.JSONDecodeError:
             # 3. Fallback: Extract first JSON object between braces
             logger.warning("Direct JSON parse failed. Attempting to extract JSON from text.")
@@ -99,7 +93,7 @@ class DeepSeekClient:
                 start_index = content.index("{")
                 end_index = content.rindex("}") + 1
                 json_str = content[start_index:end_index]
-                return dict(json.loads(json_str))
+                return cast(dict[str, Any], json.loads(json_str))
             except (ValueError, json.JSONDecodeError) as e:
                 # If extraction fails, raise original error context
                 raise json.JSONDecodeError("Failed to extract valid JSON object", content, 0) from e
