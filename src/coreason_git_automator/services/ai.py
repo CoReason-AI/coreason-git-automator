@@ -10,6 +10,7 @@
 
 import json
 import re
+from typing import Any
 
 import httpx
 from pydantic import ValidationError
@@ -63,10 +64,8 @@ class DeepSeekClient:
 
                 content = data["choices"][0]["message"]["content"]
 
-                # defensive logic: strip markdown code blocks if present
-                content = self._strip_markdown_code_blocks(content)
-
-                parsed_content = json.loads(content)
+                # Clean and parse JSON response
+                parsed_content = self._clean_and_parse_json(content)
 
                 return DeepSeekCommit(**parsed_content)
 
@@ -80,14 +79,27 @@ class DeepSeekClient:
             logger.error(f"Unexpected error in DeepSeek client: {e}")
             raise RuntimeError(f"Unexpected error in DeepSeek client: {e}") from e
 
-    def _strip_markdown_code_blocks(self, content: str) -> str:
+    def _clean_and_parse_json(self, content: str) -> dict[str, Any]:
         """
-        Strips markdown code block delimiters from the content.
+        Strips markdown code blocks and extracts JSON object if embedded in text.
+        Returns parsed JSON dict.
         """
-        # Remove start of code block (e.g. ```json or ```)
+        # 1. Strip markdown code block delimiters
         content = re.sub(r"^```[a-zA-Z]*\n", "", content.strip())
-        # Remove end of code block
         content = re.sub(r"\n```$", "", content.strip())
-        # Also handle inline or simple cases just in case
         content = content.strip("`")
-        return content
+
+        # 2. Try direct parse
+        try:
+            return dict(json.loads(content))
+        except json.JSONDecodeError:
+            # 3. Fallback: Extract first JSON object between braces
+            logger.warning("Direct JSON parse failed. Attempting to extract JSON from text.")
+            try:
+                start_index = content.index("{")
+                end_index = content.rindex("}") + 1
+                json_str = content[start_index:end_index]
+                return dict(json.loads(json_str))
+            except (ValueError, json.JSONDecodeError) as e:
+                # If extraction fails, raise original error context
+                raise json.JSONDecodeError("Failed to extract valid JSON object", content, 0) from e

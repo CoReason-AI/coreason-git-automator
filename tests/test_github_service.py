@@ -46,7 +46,7 @@ def test_verify_installed_command_error(github_service):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, ["gh", "--version"], stderr="error")
 
-            with pytest.raises(RuntimeError, match="Failed to check GitHub CLI version"):
+            with pytest.raises(RuntimeError, match="Command failed"):
                 github_service.verify_installed()
 
 
@@ -140,7 +140,7 @@ def test_get_run_logs_failure_no_retry(github_service):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["gh"], stderr="Log fetch failed")
 
-        with pytest.raises(RuntimeError, match="Failed to fetch logs"):
+        with pytest.raises(RuntimeError, match="Command failed"):
             github_service.get_run_logs("123")
 
 
@@ -187,7 +187,7 @@ def test_create_pr_process_error(github_service):
     """
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["gh"], stderr="Failed")
-        with pytest.raises(RuntimeError, match="GitHub CLI command failed: Failed"):
+        with pytest.raises(RuntimeError, match="Command failed"):
             github_service.create_pr("t", "b", "h")
 
 
