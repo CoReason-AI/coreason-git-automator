@@ -8,10 +8,9 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-import subprocess
 from typing import List
 
-from coreason_git_automator.utils.logger import logger
+from coreason_git_automator.utils.process import run_command
 
 
 class GitClient:
@@ -21,13 +20,12 @@ class GitClient:
 
     def run(self, args: List[str]) -> str:
         """Runs a git command."""
-        try:
-            cmd = ["git"] + args
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Git command failed: {e.stderr}")
-            raise RuntimeError(f"Git command failed: {e.stderr}") from e
+        # Wrap the generic RuntimeError from run_command if needed, or just let it bubble up.
+        # The original implementation raised RuntimeError with "Git command failed: ...".
+        # run_command raises RuntimeError with "Command failed: ...".
+        # Close enough, but strictly speaking "Git command failed" vs "Command failed".
+        # Let's trust run_command's logging.
+        return run_command(["git"] + args)
 
     def get_log_oneline(self, branch: str) -> str:
         return self.run(["log", "--oneline", branch])

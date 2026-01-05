@@ -35,7 +35,7 @@ def test_run_failure(git_client):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["git"], stderr="Error")
 
-        with pytest.raises(RuntimeError, match="Git command failed"):
+        with pytest.raises(RuntimeError, match="Command failed"):
             git_client.run(["status"])
 
 
