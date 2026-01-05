@@ -21,7 +21,7 @@ class JulesWrapper:
     Wrapper around the Jules CLI.
     """
 
-    def __init__(self, executable: str = "jules"):
+    def __init__(self, executable: str = "jules") -> None:
         found = shutil.which(executable)
         if not found:
             raise RuntimeError(f"Jules executable '{executable}' not found in PATH.")
@@ -43,6 +43,7 @@ class JulesWrapper:
         context_str = ""
         for file_path in context_files:
             try:
+                # Explicitly use utf-8 to ensure binary files raise UnicodeDecodeError
                 content = file_path.read_text(encoding="utf-8")
                 context_str += f"[CONTEXT: {file_path}]\n{content}\n\n"
             except Exception as e:

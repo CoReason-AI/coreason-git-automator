@@ -10,7 +10,7 @@
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from pydantic import ValidationError
@@ -26,7 +26,7 @@ class DeepSeekClient:
     Client for interacting with the DeepSeek API.
     """
 
-    def __init__(self, config: AutomationConfig):
+    def __init__(self, config: AutomationConfig) -> None:
         self.api_key = config.deepseek_api_key.get_secret_value()
         self.base_url = "https://api.deepseek.com/v1"
 
@@ -91,7 +91,7 @@ class DeepSeekClient:
 
         # 2. Try direct parse
         try:
-            return dict(json.loads(content))
+            return cast(dict[str, Any], json.loads(content))
         except json.JSONDecodeError:
             # 3. Fallback: Extract first JSON object between braces
             logger.warning("Direct JSON parse failed. Attempting to extract JSON from text.")
@@ -99,7 +99,7 @@ class DeepSeekClient:
                 start_index = content.index("{")
                 end_index = content.rindex("}") + 1
                 json_str = content[start_index:end_index]
-                return dict(json.loads(json_str))
+                return cast(dict[str, Any], json.loads(json_str))
             except (ValueError, json.JSONDecodeError) as e:
                 # If extraction fails, raise original error context
                 raise json.JSONDecodeError("Failed to extract valid JSON object", content, 0) from e
