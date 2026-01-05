@@ -18,6 +18,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from coreason_git_automator.config import AutomationConfig
 from coreason_git_automator.models import DeepSeekCommit
+from coreason_git_automator.prompts import DEEPSEEK_SYSTEM_PROMPT
 from coreason_git_automator.utils.logger import logger
 
 
@@ -35,13 +36,6 @@ class DeepSeekClient:
         """
         Analyzes the git log and generates a conventional commit message and branch name.
         """
-        system_prompt = (
-            "You are a Senior Release Engineer. Analyze the provided git commit log. "
-            "Your goal is to consolidate the work into a single 'Conventional Commit' message "
-            "and suggest a clean git branch name.\n"
-            "Output purely valid JSON with no markdown formatting."
-        )
-
         try:
             with httpx.Client(timeout=30.0) as client:
                 response = client.post(
@@ -53,7 +47,7 @@ class DeepSeekClient:
                     json={
                         "model": "deepseek-coder",
                         "messages": [
-                            {"role": "system", "content": system_prompt},
+                            {"role": "system", "content": DEEPSEEK_SYSTEM_PROMPT},
                             {"role": "user", "content": git_log},
                         ],
                         "response_format": {"type": "json_object"},

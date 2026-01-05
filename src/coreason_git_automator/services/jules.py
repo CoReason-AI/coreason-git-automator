@@ -8,32 +8,22 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-import shutil
 from pathlib import Path
 from typing import List, Optional
 
+from coreason_git_automator.prompts import JULES_CONTEXT_TEMPLATE, JULES_INSTRUCTION_HEADER
+from coreason_git_automator.services.base import ExternalTool
 from coreason_git_automator.utils.logger import logger
 from coreason_git_automator.utils.process import run_command
 
 
-class JulesWrapper:
+class JulesWrapper(ExternalTool):
     """
     Wrapper around the Jules CLI.
     """
 
     def __init__(self, executable: str = "jules") -> None:
-        found = shutil.which(executable)
-        if not found:
-            raise RuntimeError(f"Jules executable '{executable}' not found in PATH.")
-        self.executable: str = found
-
-    def verify_version(self) -> str:
-        """Verifies Jules is installed and returns version."""
-        try:
-            return run_command([self.executable, "--version"])
-        except RuntimeError as e:
-            logger.error(f"Failed to check Jules version: {e}")
-            raise
+        super().__init__(executable)
 
     def _prepare_prompt(self, prompt: str, context_files: Optional[List[Path]]) -> str:
         """Prepends context files to the prompt."""
@@ -45,11 +35,18 @@ class JulesWrapper:
             try:
                 # Explicitly use utf-8 to ensure binary files raise UnicodeDecodeError
                 content = file_path.read_text(encoding="utf-8")
-                context_str += f"[CONTEXT: {file_path}]\n{content}\n\n"
+                context_str += JULES_CONTEXT_TEMPLATE.format(file_path=file_path, content=content)
             except Exception as e:
                 logger.warning(f"Failed to read context file {file_path}: {e}")
 
-        return f"{context_str}[INSTRUCTION]\n{prompt}"
+        return JULES_INSTRUCTION_HEADER.format(prompt=prompt).replace(
+            "[INSTRUCTION]\n", f"{context_str}[INSTRUCTION]\n"
+        )
+        # Optimization: The format string in prompt.py is `[INSTRUCTION]\n{prompt}`.
+        # We need to prepend context.
+        # The previous logic was: `{context_str}[INSTRUCTION]\n{prompt}`.
+        # Let's adjust slightly to use template + string concat cleanly.
+        return f"{context_str}" + JULES_INSTRUCTION_HEADER.format(prompt=prompt)
 
     def run_session(self, prompt: str, context_files: Optional[List[Path]] = None) -> None:
         """Starts a Jules session with the given prompt and context."""

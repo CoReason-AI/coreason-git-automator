@@ -8,7 +8,6 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-import time
 from pathlib import Path
 from typing import Annotated, List, Optional
 
@@ -20,7 +19,7 @@ from coreason_git_automator.services.ai import DeepSeekClient
 from coreason_git_automator.services.git import GitClient
 from coreason_git_automator.services.github import GitHubService
 from coreason_git_automator.services.jules import JulesWrapper
-from coreason_git_automator.utils.logger import logger
+from coreason_git_automator.services.workflow import WorkflowOrchestrator
 
 app = typer.Typer(help="Coreason Git Automator - AI-driven coding assistant.")
 console = Console()
@@ -58,127 +57,11 @@ def start(
         deepseek = DeepSeekClient(config)
         git = GitClient()
 
-        # 1. Verify Dependencies
-        console.print(f"[bold green]Found Jules version: {jules.verify_version()}[/bold green]")
-        console.print(f"[bold green]Found GitHub CLI version: {github.verify_installed()}[/bold green]")
-
-        # 2. Start Session
-        console.print("[bold blue]Starting Jules session...[/bold blue]")
-        # Ensure we are on the Jules branch (create if needed)
-        git.ensure_branch(jules_branch)
-        jules.run_session(prompt, context)
-
-        # 3. Monitor Loop
-        if auto_fix:
-            _monitor_ci_loop(github, jules, jules_branch, max_retries)
-
-        # 4. Merge & Polish
-        _perform_merge_and_push(git, deepseek, github, jules_branch, base_branch)
+        orchestrator = WorkflowOrchestrator(config, jules, github, deepseek, git, console)
+        orchestrator.start_session(prompt, context, jules_branch, auto_fix, max_retries, base_branch)
 
     except Exception as e:
-        logger.exception("Automation failed")
-        console.print(f"[bold red]Error: {e}[/bold red]")
-        raise typer.Exit(code=1) from e
-
-
-def _monitor_ci_loop(github: GitHubService, jules: JulesWrapper, branch: str, max_retries: int) -> None:
-    """
-    Monitors the CI/CD pipeline for the given branch and feeds back errors to Jules.
-    """
-    last_processed_run_id = None
-    consecutive_failures = 0
-
-    with console.status("[bold yellow]Monitoring CI/CD...[/bold yellow]") as status:
-        while True:
-            if consecutive_failures >= max_retries:
-                console.print(f"[bold red]Max retries ({max_retries}) exceeded. Aborting.[/bold red]")
-                raise typer.Exit(code=1)
-
-            run_status = github.get_latest_run_status(branch)
-
-            if not run_status:
-                time.sleep(5)
-                continue
-
-            run_id = str(run_status.get("databaseId"))
-            conclusion = run_status.get("conclusion")
-            state = run_status.get("status")
-
-            if state in ["queued", "in_progress"]:
-                status.update("[bold yellow]Waiting for CI...[/bold yellow]")
-                time.sleep(10)
-                continue
-
-            if conclusion == "success":
-                console.print("[bold green]CI passed![/bold green]")
-                break
-
-            if conclusion == "failure":
-                if run_id == last_processed_run_id:
-                    # Already processed this failure, wait for new run
-                    status.update("[bold yellow]Waiting for new run after failure...[/bold yellow]")
-                    time.sleep(10)
-                    continue
-
-                console.print(f"[bold red]CI failed (Run {run_id}). Fetching logs...[/bold red]")
-                logs = github.get_run_logs(run_id)
-
-                # Extract last 50 lines
-                last_50_lines = "\n".join(logs.splitlines()[-50:])
-
-                console.print("[bold red]Sending feedback to Jules...[/bold red]")
-                jules.send_feedback(last_50_lines)
-                last_processed_run_id = run_id
-                consecutive_failures += 1
-
-                # Wait for Jules to push fixes
-                time.sleep(10)
-                continue
-
-
-def _perform_merge_and_push(
-    git: GitClient,
-    deepseek: DeepSeekClient,
-    github: GitHubService,
-    jules_branch: str,
-    base_branch: str,
-) -> None:
-    """
-    Consults DeepSeek to generate a commit message, squashes the changes, and pushes to a new branch.
-    """
-    console.print("[bold magenta]Preparing to merge...[/bold magenta]")
-
-    # Fetch git log
-    raw_log = git.get_log_oneline(jules_branch)
-
-    # Sanitize (simple filter)
-    sanitized_log = "\n".join(
-        line for line in raw_log.splitlines() if "jules" not in line.lower() and "Co-authored-by" not in line
-    )
-
-    if not sanitized_log.strip():
-        console.print("[bold red]Empty git log after sanitization. Aborting.[/bold red]")
-        raise typer.Exit(code=1)
-
-    # Intelligence Step
-    console.print("[bold cyan]Consulting DeepSeek...[/bold cyan]")
-    commit_info = deepseek.generate_commit_info(sanitized_log)
-
-    console.print(f"Generated Plan:\nTitle: {commit_info.commit_title}\nBranch: {commit_info.branch_name}")
-
-    # Execution
-    git.checkout(base_branch)
-    git.pull()
-    git.create_branch(commit_info.branch_name)
-    try:
-        git.merge_squash(jules_branch)
-    except RuntimeError as e:
-        console.print("[bold red]Git operation failed (Merge Conflict).[/bold red]")
-        raise typer.Exit(code=1) from e
-
-    git.commit(commit_info.commit_title, commit_info.commit_body)
-    git.push(commit_info.branch_name)
-
-    pr_url = github.create_pr(commit_info.commit_title, commit_info.commit_body, commit_info.branch_name, base_branch)
-
-    console.print(f"[bold green]PR Created: {pr_url}[/bold green]")
+        # logger.exception("Automation failed") # Logged inside orchestrator
+        if not isinstance(e, typer.Exit):
+            raise typer.Exit(code=1) from e
+        raise

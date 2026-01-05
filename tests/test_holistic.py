@@ -40,6 +40,9 @@ def mock_boundaries():
         patch("subprocess.run") as mock_sub,
         patch("httpx.Client") as mock_http,
         patch("shutil.which") as mock_which,
+        patch("tenacity.nap.time.sleep"),  # Skip tenacity sleeps
+        patch("coreason_git_automator.services.workflow.time.sleep"),  # Skip workflow sleeps
+        patch("coreason_git_automator.cli.time.sleep"),  # Skip cli sleeps (if any left)
     ):
         # Default behavior: Jules exists
         mock_which.return_value = "/usr/bin/jules"
