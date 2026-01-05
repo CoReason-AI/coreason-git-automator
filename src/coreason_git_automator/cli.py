@@ -40,6 +40,7 @@ def start(
     context: Annotated[Optional[List[Path]], typer.Option(help="Local files to inject context")] = None,
     repo: Annotated[str, typer.Option(help="Target repository path (unused currently as we run in cwd)")] = ".",
     auto_fix: Annotated[bool, typer.Option(help="Enable self-healing loop")] = True,
+    max_retries: Annotated[int, typer.Option(help="Maximum number of auto-fix retries")] = 3,
     base_branch: Annotated[str, typer.Option(help="Base branch to merge into")] = "main",
     jules_branch: Annotated[str, typer.Option(help="Temporary branch used by Jules")] = "jules-temp",
 ) -> None:
@@ -68,8 +69,13 @@ def start(
         # 3. Monitor Loop
         if auto_fix:
             last_processed_run_id = None
+            consecutive_failures = 0
             with console.status("[bold yellow]Monitoring CI/CD...[/bold yellow]") as status:
                 while True:
+                    if consecutive_failures >= max_retries:
+                        console.print(f"[bold red]Max retries ({max_retries}) exceeded. Aborting.[/bold red]")
+                        raise typer.Exit(code=1)
+
                     run_status = github.get_latest_run_status(jules_branch)
 
                     if not run_status:
@@ -106,6 +112,7 @@ def start(
                         console.print("[bold red]Sending feedback to Jules...[/bold red]")
                         jules.send_feedback(last_50_lines)
                         last_processed_run_id = run_id
+                        consecutive_failures += 1
 
                         # Wait for Jules to push fixes
                         time.sleep(10)

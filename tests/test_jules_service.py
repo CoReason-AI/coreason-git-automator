@@ -4,7 +4,7 @@
 # Licensed under the Prosperity Public License 3.0 (the "License").
 # A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
 # For details, see the LICENSE file.
-# Commercial use beyond a 30-day trial requires a separate license.
+# Commercial use beyond a-day trial requires a separate license.
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
@@ -83,6 +83,29 @@ def test_prepare_prompt_read_error(jules_wrapper):
 
     # Should skip the file content but still return prompt
     assert "[INSTRUCTION]" in prompt
+    assert "Fix it" in prompt
+
+
+def test_prepare_prompt_binary_file(jules_wrapper):
+    """
+    Complex Case: Binary file (UnicodeDecodeError) should be gracefully skipped.
+    """
+    f1 = MagicMock(spec=Path)
+    # Simulate UnicodeDecodeError (which inherits from ValueError in Py3, but specifically checked in memory)
+    # Memory: "JulesWrapper must explicitly use encoding='utf-8' when reading context files;
+    # this ensures binary files raise UnicodeDecodeError and are skipped correctly."
+    f1.read_text.side_effect = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    f1.__str__.return_value = "binary.bin"
+
+    with patch("coreason_git_automator.services.jules.logger") as mock_logger:
+        prompt = jules_wrapper._prepare_prompt("Fix it", [f1])
+
+        # Ensure we logged a warning
+        mock_logger.warning.assert_called()
+        assert "Failed to read context file" in mock_logger.warning.call_args[0][0]
+
+    # Content should not be in prompt
+    assert "[CONTEXT: binary.bin]" not in prompt
     assert "Fix it" in prompt
 
 
