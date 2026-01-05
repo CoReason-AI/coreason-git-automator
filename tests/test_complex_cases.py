@@ -39,7 +39,8 @@ def deepseek_client(mock_config):
 
 @pytest.fixture
 def github_service():
-    return GitHubService()
+    with patch("shutil.which", return_value="/usr/bin/gh"):
+        return GitHubService()
 
 
 @pytest.fixture
@@ -50,10 +51,11 @@ def mock_deps():
         patch("coreason_git_automator.cli.GitHubService") as mock_github,
         patch("coreason_git_automator.cli.DeepSeekClient") as mock_deepseek,
         patch("coreason_git_automator.cli.GitClient") as mock_git,
-        patch("coreason_git_automator.cli.time.sleep") as mock_sleep,
+        patch("coreason_git_automator.services.workflow.time.sleep") as mock_sleep,
     ):
         mock_jules_instance = mock_jules.return_value
-        mock_jules_instance.verify_version.return_value = "1.0.0"
+        # verify_version -> verify_installed
+        mock_jules_instance.verify_installed.return_value = "1.0.0"
         mock_github_instance = mock_github.return_value
         mock_github_instance.verify_installed.return_value = "gh version"
         mock_deepseek_instance = mock_deepseek.return_value

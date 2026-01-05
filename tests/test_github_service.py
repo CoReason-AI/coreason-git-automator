@@ -20,7 +20,8 @@ from coreason_git_automator.services.github import GitHubService
 
 @pytest.fixture
 def github_service():
-    return GitHubService()
+    with patch("shutil.which", return_value="/usr/bin/gh"):
+        return GitHubService()
 
 
 def test_verify_installed_success(github_service):
@@ -32,13 +33,22 @@ def test_verify_installed_success(github_service):
 
             assert version == "gh version 2.40.0 (2023-10-24)"
             mock_run.assert_called_once()
-            assert mock_run.call_args[0][0] == ["gh", "--version"]
+            assert mock_run.call_args[0][0] == ["/usr/bin/gh", "--version"]
 
 
 def test_verify_installed_missing_executable(github_service):
+    # Testing that verify_installed checks the executable via run_command
+    # But since verify_installed calls run_command, and run_command executes the command,
+    # if the executable is missing (and not caught by init), it fails.
+    # However, ExternalTool catches missing executable in __init__.
+    # So to test verify_installed failing, we must assume __init__ succeeded.
+    pass  # Covered by test_verify_installed_command_error
+
+
+def test_init_raises_if_missing():
     with patch("shutil.which", return_value=None):
-        with pytest.raises(RuntimeError, match="GitHub CLI 'gh' not found in PATH"):
-            github_service.verify_installed()
+        with pytest.raises(RuntimeError, match="Executable 'gh' not found in PATH"):
+            GitHubService()
 
 
 def test_verify_installed_command_error(github_service):

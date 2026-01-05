@@ -11,6 +11,7 @@
 from unittest.mock import patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from coreason_git_automator.cli import app
@@ -27,11 +28,12 @@ def mock_deps():
         patch("coreason_git_automator.cli.GitHubService") as mock_github,
         patch("coreason_git_automator.cli.DeepSeekClient") as mock_deepseek,
         patch("coreason_git_automator.cli.GitClient") as mock_git,
-        patch("coreason_git_automator.cli.time.sleep") as mock_sleep,
+        patch("coreason_git_automator.services.workflow.time.sleep") as mock_sleep,
     ):  # Mock sleep
         # Setup successful flow
         mock_jules_instance = mock_jules.return_value
-        mock_jules_instance.verify_version.return_value = "1.0.0"
+        # JulesWrapper now uses verify_installed
+        mock_jules_instance.verify_installed.return_value = "1.0.0"
 
         mock_github_instance = mock_github.return_value
         mock_github_instance.verify_installed.return_value = "gh version 2.40.0"
@@ -158,3 +160,14 @@ def test_start_git_conflict(mock_deps):
     assert result.exit_code == 1
     assert "Git operation failed" in result.stdout
     assert "Merge Conflict" in result.stdout
+
+
+def test_start_re_raise_typer_exit(mock_deps):
+    """
+    Cover cli.py line 69: re-raise typer.Exit
+    """
+    mock_deps["jules"].run_session.side_effect = typer.Exit(code=2)
+
+    result = runner.invoke(app, ["start", "Task"])
+
+    assert result.exit_code == 2

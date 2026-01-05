@@ -86,6 +86,28 @@ def test_generate_commit_info_strip_markdown(deepseek_client):
         assert result.commit_title == "feat: stripped"
 
 
+def test_generate_commit_info_conversational_json(deepseek_client):
+    """Verifies that JSON is extracted from conversational text."""
+    dirty_json = """
+    Sure, here is the JSON you requested:
+    {
+        "commit_title": "feat: extracted",
+        "commit_body": "- extracted from text",
+        "branch_name": "feat/extracted"
+    }
+    Hope this helps!
+    """
+    mock_response = {"choices": [{"message": {"content": dirty_json}}]}
+
+    with patch("httpx.Client.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: mock_response, raise_for_status=lambda: None)
+
+        result = deepseek_client.generate_commit_info("raw log")
+
+        assert result.commit_title == "feat: extracted"
+        assert result.branch_name == "feat/extracted"
+
+
 def test_generate_commit_info_parse_error(deepseek_client):
     mock_response = {"choices": [{"message": {"content": "Invalid JSON"}}]}
 

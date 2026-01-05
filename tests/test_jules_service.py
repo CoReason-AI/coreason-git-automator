@@ -31,31 +31,32 @@ def jules_wrapper(mock_shutil_which):
 
 def test_init_success(mock_shutil_which):
     jw = JulesWrapper()
-    assert jw.executable == "/usr/bin/jules"
+    assert jw.executable == "/usr/bin/jules"  # ExternalTool sets executable to resolved path
+    assert jw._path == "/usr/bin/jules"
 
 
 def test_init_not_found():
     with patch("shutil.which", return_value=None):
-        with pytest.raises(RuntimeError, match="Jules executable 'jules' not found"):
+        with pytest.raises(RuntimeError, match="Executable 'jules' not found in PATH"):
             JulesWrapper()
 
 
-def test_verify_version_success(jules_wrapper):
+def test_verify_installed_success(jules_wrapper):
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="1.0.0\n", returncode=0)
 
-        version = jules_wrapper.verify_version()
+        version = jules_wrapper.verify_installed()
 
         assert version == "1.0.0"
         mock_run.assert_called_once()
 
 
-def test_verify_version_failure(jules_wrapper):
+def test_verify_installed_failure(jules_wrapper):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"], stderr="Error")
 
         with pytest.raises(RuntimeError, match="Command failed"):
-            jules_wrapper.verify_version()
+            jules_wrapper.verify_installed()
 
 
 def test_prepare_prompt_no_context(jules_wrapper):
