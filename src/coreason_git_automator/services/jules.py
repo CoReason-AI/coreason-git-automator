@@ -39,13 +39,7 @@ class JulesWrapper(ExternalTool):
             except Exception as e:
                 logger.warning(f"Failed to read context file {file_path}: {e}")
 
-        return JULES_INSTRUCTION_HEADER.format(prompt=prompt).replace(
-            "[INSTRUCTION]\n", f"{context_str}[INSTRUCTION]\n"
-        )
-        # Optimization: The format string in prompt.py is `[INSTRUCTION]\n{prompt}`.
-        # We need to prepend context.
-        # The previous logic was: `{context_str}[INSTRUCTION]\n{prompt}`.
-        # Let's adjust slightly to use template + string concat cleanly.
+        # Prepend context before the instruction header
         return f"{context_str}" + JULES_INSTRUCTION_HEADER.format(prompt=prompt)
 
     def run_session(self, prompt: str, context_files: Optional[List[Path]] = None) -> None:
