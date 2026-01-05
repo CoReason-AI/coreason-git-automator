@@ -66,7 +66,13 @@ class DeepSeekClient:
                 # defensive logic: strip markdown code blocks if present
                 content = self._strip_markdown_code_blocks(content)
 
-                parsed_content = json.loads(content)
+                try:
+                    parsed_content = json.loads(content)
+                except json.JSONDecodeError:
+                    # Fallback: Try to find JSON object within text
+                    logger.warning("Direct JSON parse failed. Attempting to extract JSON from text.")
+                    content = self._extract_json_substring(content)
+                    parsed_content = json.loads(content)
 
                 return DeepSeekCommit(**parsed_content)
 
@@ -91,3 +97,15 @@ class DeepSeekClient:
         # Also handle inline or simple cases just in case
         content = content.strip("`")
         return content
+
+    def _extract_json_substring(self, content: str) -> str:
+        """
+        Extracts the first JSON object string found between curly braces.
+        """
+        try:
+            start_index = content.index("{")
+            end_index = content.rindex("}") + 1
+            return content[start_index:end_index]
+        except ValueError as e:
+            # If braces are not found, re-raise original content to let JSONDecodeError happen upstairs
+            raise json.JSONDecodeError("No JSON object found", content, 0) from e
