@@ -10,12 +10,12 @@
 
 import json
 import shutil
-import subprocess
 from typing import Any, Dict, Optional, cast
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from coreason_git_automator.utils.logger import logger
+from coreason_git_automator.utils.process import run_command
 
 
 class GitHubService:
@@ -32,11 +32,11 @@ class GitHubService:
             raise RuntimeError(f"GitHub CLI '{self.executable}' not found in PATH.")
 
         try:
-            result = subprocess.run([self.executable, "--version"], capture_output=True, text=True, check=True)
-            return str(result.stdout.strip())
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to check GitHub CLI version: {e.stderr}")
-            raise RuntimeError(f"Failed to check GitHub CLI version: {e.stderr}") from e
+            return run_command([self.executable, "--version"])
+        except RuntimeError as e:
+            # Re-wrap or log specifically if needed, but generic is fine.
+            logger.error(f"Failed to check GitHub CLI version: {e}")
+            raise
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=5))  # type: ignore
     def _run_gh_command(self, args: list[str]) -> Optional[Dict[str, Any]]:
@@ -46,11 +46,11 @@ class GitHubService:
     def _run_gh_command_impl(self, args: list[str]) -> Optional[Dict[str, Any]]:
         try:
             cmd = ["gh"] + args
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            output = run_command(cmd)
             # Try to parse JSON. If empty, it will raise JSONDecodeError.
-            if not result.stdout.strip():
+            if not output.strip():
                 return None
-            res = json.loads(result.stdout)
+            res = json.loads(output)
             if isinstance(res, dict):
                 return res
             if isinstance(res, list):
@@ -59,9 +59,9 @@ class GitHubService:
                 # Here we just return the raw parsed JSON (list or dict).
                 return res  # type: ignore
             return None
-        except subprocess.CalledProcessError as e:
-            logger.error(f"GitHub CLI command failed: {e.stderr}")
-            raise RuntimeError(f"GitHub CLI command failed: {e.stderr}") from e
+        except RuntimeError:
+            # Logging already handled in run_command
+            raise
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse GitHub CLI output: {e}")
             raise RuntimeError(f"Failed to parse GitHub CLI output: {e}") from e
@@ -105,13 +105,7 @@ class GitHubService:
         I will keep `gh run view` for logs to avoid zip complexities which might be out of scope for "Atomic Unit",
         unless I see a clear path. The previous code used `gh run view`.
         """
-        try:
-            cmd = ["gh", "run", "view", run_id, "--log"]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to fetch logs: {e.stderr}")
-            raise RuntimeError(f"Failed to fetch logs: {e.stderr}") from e
+        return run_command(["gh", "run", "view", run_id, "--log"])
 
     def create_pr(self, title: str, body: str, head_branch: str, base_branch: str = "main") -> str:
         """
@@ -119,33 +113,17 @@ class GitHubService:
         Uses `gh api repos/:owner/:repo/pulls`
         """
         endpoint = "repos/:owner/:repo/pulls"
-        # gh api -X POST repos/:owner/:repo/pulls -f title="..." -f body="..." ...
-        # We need to construct the input field carefully.
-        # `gh api` accepts inputs via `-f` (string) or `-F` (file) or `--input -` (stdin json).
-        # We can pass JSON fields directly to `gh api`.
-
-        # We need to invoke `gh api` with input parameters.
-        # subprocess call needs to pass these params.
-        # The `gh api` command handles JSON serialization if we pass field=value.
-        # But for body with newlines, passing as arguments is tricky.
-        # Best way is to pass JSON via stdin.
-
         payload = {"title": title, "body": body, "head": head_branch, "base": base_branch}
         json_payload = json.dumps(payload)
 
         try:
             cmd = ["gh", "api", endpoint, "--method", "POST", "--input", "-"]
-            # We need to modify _run_gh_command to support input, or just call subprocess here.
-            # Let's call subprocess directly to handle input.
-            result = subprocess.run(cmd, input=json_payload, capture_output=True, text=True, check=True)
-            res = json.loads(result.stdout)
+            output = run_command(cmd, input_text=json_payload)
+            res = json.loads(output)
             if isinstance(res, dict) and "html_url" in res:
                 return str(res["html_url"])
             raise RuntimeError("Failed to retrieve PR URL from API response")
 
-        except subprocess.CalledProcessError as e:
-            logger.error(f"GitHub CLI command failed: {e.stderr}")
-            raise RuntimeError(f"GitHub CLI command failed: {e.stderr}") from e
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse GitHub CLI output: {e}")
             raise RuntimeError(f"Failed to parse GitHub CLI output: {e}") from e

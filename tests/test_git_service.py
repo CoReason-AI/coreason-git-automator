@@ -35,7 +35,7 @@ def test_run_failure(git_client):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["git"], stderr="Error")
 
-        with pytest.raises(RuntimeError, match="Git command failed"):
+        with pytest.raises(RuntimeError, match="Command failed"):
             git_client.run(["status"])
 
 
@@ -55,6 +55,28 @@ def test_create_branch(git_client):
     with patch.object(git_client, "run") as mock_run:
         git_client.create_branch("feature")
         mock_run.assert_called_with(["checkout", "-b", "feature"])
+
+
+def test_ensure_branch_existing(git_client):
+    """Test ensure_branch when branch already exists."""
+    with patch.object(git_client, "run") as mock_run:
+        git_client.ensure_branch("feature")
+        # Should just checkout
+        mock_run.assert_called_once_with(["checkout", "feature"])
+
+
+def test_ensure_branch_missing(git_client):
+    """Test ensure_branch when branch does not exist."""
+    with patch.object(git_client, "run") as mock_run:
+        # First call fails (checkout), second call succeeds (create)
+        # We need to simulate RuntimeError on first call
+        mock_run.side_effect = [RuntimeError("Failed"), None]
+
+        git_client.ensure_branch("feature")
+
+        assert mock_run.call_count == 2
+        mock_run.assert_any_call(["checkout", "feature"])
+        mock_run.assert_any_call(["checkout", "-b", "feature"])
 
 
 def test_merge_squash(git_client):

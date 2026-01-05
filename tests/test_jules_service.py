@@ -54,7 +54,7 @@ def test_verify_version_failure(jules_wrapper):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"], stderr="Error")
 
-        with pytest.raises(RuntimeError, match="Failed to check Jules version"):
+        with pytest.raises(RuntimeError, match="Command failed"):
             jules_wrapper.verify_version()
 
 
@@ -122,7 +122,7 @@ def test_run_session_failure(jules_wrapper):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"])
 
-        with pytest.raises(RuntimeError, match="Jules session failed"):
+        with pytest.raises(RuntimeError, match="Command failed"):
             jules_wrapper.run_session("Prompt")
 
 
@@ -140,5 +140,5 @@ def test_send_feedback_failure(jules_wrapper):
     with patch("subprocess.run") as mock_run:
         mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"])
 
-        with pytest.raises(RuntimeError, match="Failed to send feedback"):
+        with pytest.raises(RuntimeError, match="Command failed"):
             jules_wrapper.send_feedback("Errors")

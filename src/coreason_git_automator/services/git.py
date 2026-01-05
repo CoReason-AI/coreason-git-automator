@@ -8,10 +8,10 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-import subprocess
 from typing import List
 
 from coreason_git_automator.utils.logger import logger
+from coreason_git_automator.utils.process import run_command
 
 
 class GitClient:
@@ -21,13 +21,7 @@ class GitClient:
 
     def run(self, args: List[str]) -> str:
         """Runs a git command."""
-        try:
-            cmd = ["git"] + args
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Git command failed: {e.stderr}")
-            raise RuntimeError(f"Git command failed: {e.stderr}") from e
+        return run_command(["git"] + args)
 
     def get_log_oneline(self, branch: str) -> str:
         return self.run(["log", "--oneline", branch])
@@ -40,6 +34,18 @@ class GitClient:
 
     def create_branch(self, branch: str) -> None:
         self.run(["checkout", "-b", branch])
+
+    def ensure_branch(self, branch: str) -> None:
+        """
+        Checks out the branch. If it doesn't exist, creates it.
+        """
+        try:
+            # Try to checkout first
+            self.run(["checkout", branch])
+        except RuntimeError:
+            # If failed, try to create it
+            logger.info(f"Branch '{branch}' not found. Creating it.")
+            self.create_branch(branch)
 
     def merge_squash(self, branch: str) -> None:
         self.run(["merge", "--squash", branch])
