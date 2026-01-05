@@ -10,6 +10,7 @@
 
 from typing import List
 
+from coreason_git_automator.utils.logger import logger
 from coreason_git_automator.utils.process import run_command
 
 
@@ -20,11 +21,6 @@ class GitClient:
 
     def run(self, args: List[str]) -> str:
         """Runs a git command."""
-        # Wrap the generic RuntimeError from run_command if needed, or just let it bubble up.
-        # The original implementation raised RuntimeError with "Git command failed: ...".
-        # run_command raises RuntimeError with "Command failed: ...".
-        # Close enough, but strictly speaking "Git command failed" vs "Command failed".
-        # Let's trust run_command's logging.
         return run_command(["git"] + args)
 
     def get_log_oneline(self, branch: str) -> str:
@@ -38,6 +34,18 @@ class GitClient:
 
     def create_branch(self, branch: str) -> None:
         self.run(["checkout", "-b", branch])
+
+    def ensure_branch(self, branch: str) -> None:
+        """
+        Checks out the branch. If it doesn't exist, creates it.
+        """
+        try:
+            # Try to checkout first
+            self.run(["checkout", branch])
+        except RuntimeError:
+            # If failed, try to create it
+            logger.info(f"Branch '{branch}' not found. Creating it.")
+            self.create_branch(branch)
 
     def merge_squash(self, branch: str) -> None:
         self.run(["merge", "--squash", branch])

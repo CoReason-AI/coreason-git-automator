@@ -64,6 +64,8 @@ def start(
 
         # 2. Start Session
         console.print("[bold blue]Starting Jules session...[/bold blue]")
+        # Ensure we are on the Jules branch (create if needed)
+        git.ensure_branch(jules_branch)
         jules.run_session(prompt, context)
 
         # 3. Monitor Loop
