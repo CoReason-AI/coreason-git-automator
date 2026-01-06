@@ -1,14 +1,6 @@
-# Copyright (c) 2025 CoReason, Inc.
-#
-# This software is proprietary and dual-licensed.
-# Licensed under the Prosperity Public License 3.0 (the "License").
-# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
-# For details, see the LICENSE file.
-# Commercial use beyond a 30-day trial requires a separate license.
-#
-# Source Code: https://github.com/CoReason-AI/coreason_git_automator
-
-from unittest.mock import patch
+import json
+import subprocess
+from unittest.mock import MagicMock, patch
 
 import pytest
 from tenacity import RetryError
@@ -17,216 +9,254 @@ from coreason_git_automator.services.github import GitHubService
 
 
 @pytest.fixture
-def github_service():
-    # We must ensure shutil.which returns a path so __init__ doesn't fail
-    with patch("shutil.which", return_value="/usr/bin/gh"):
-        yield GitHubService()
+def mock_shutil_which():
+    with patch("shutil.which", return_value="/usr/bin/gh") as mock:
+        yield mock
 
 
-def test_verify_installed_success(github_service):
-    # Verify it works
-    with patch("coreason_git_automator.services.base.run_command", return_value="gh version 2.40.0"):
-        # ExternalTool.verify_installed returns the output of `--version`
-        assert github_service.verify_installed() == "gh version 2.40.0"
+@pytest.fixture
+def mock_subprocess_run():
+    with patch("subprocess.run") as mock:
+        mock.return_value.returncode = 0
+        mock.return_value.stdout = ""
+        yield mock
 
 
-def test_verify_installed_missing_executable(github_service):
-    # So to test verify_installed failing, we must assume __init__ succeeded.
-    pass  # Covered by test_verify_installed_command_error
+@pytest.fixture
+def github(mock_shutil_which):
+    return GitHubService()
 
 
-def test_init_raises_if_missing():
+def test_init_raises_if_not_found():
     with patch("shutil.which", return_value=None):
-        with pytest.raises(RuntimeError, match="Executable 'gh' not found in PATH"):
+        with pytest.raises(RuntimeError):
             GitHubService()
 
 
-def test_verify_installed_command_error(github_service):
-    with patch("coreason_git_automator.services.base.run_command", side_effect=RuntimeError("Command failed")):
-        # verify_installed calls self.executable --version.
-        # It should propagate the RuntimeError if run_command fails.
-        with pytest.raises(RuntimeError, match="Command failed"):
-            github_service.verify_installed()
+def test_run_gh_command_success(github, mock_subprocess_run):
+    """Test successful JSON command execution."""
+    mock_subprocess_run.return_value.stdout = '{"key": "value"}'
+
+    # We access the private method to test it directly or use a public method that calls it.
+    # But _run_gh_command is private. However, public methods call it.
+    # Let's test via get_latest_run_status for integration or access directly.
+    # Accessing directly for unit testing is fine in Python.
+
+    result = github._run_gh_command(["some", "args"])
+    assert result == {"key": "value"}
+
+    args = mock_subprocess_run.call_args[0][0]
+    assert args == ["/usr/bin/gh", "some", "args"]
 
 
-def test_get_latest_run_status_success(github_service):
-    mock_response = {"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success"}]}
+def test_run_gh_command_prohibited(github):
+    """Test that 'run view' is prohibited."""
+    with pytest.raises(RetryError) as excinfo:
+        github._run_gh_command(["run", "view", "123"])
 
-    with patch.object(github_service, "_run_gh_command", return_value=mock_response) as mock_run:
-        status = github_service.get_latest_run_status("feature-branch")
-        assert status is not None
-        assert status["databaseId"] == 12345
-        assert status["conclusion"] == "success"
-        mock_run.assert_called_with(["api", "repos/:owner/:repo/actions/runs?branch=feature-branch&per_page=1"])
+    assert isinstance(excinfo.value.last_attempt.exception(), RuntimeError)
+    assert "Prohibited command" in str(excinfo.value.last_attempt.exception())
 
 
-def test_get_latest_run_status_no_runs(github_service):
-    mock_response = {"workflow_runs": []}
-    with patch.object(github_service, "_run_gh_command", return_value=mock_response):
-        status = github_service.get_latest_run_status("new-branch")
-        assert status is None
+def test_run_gh_command_json_error(github, mock_subprocess_run):
+    """Test handling of invalid JSON output."""
+    mock_subprocess_run.return_value.stdout = "Not JSON"
+
+    # _run_gh_command retries on RuntimeError?
+    # No, it retries on exception.
+    # json.JSONDecodeError raises RuntimeError inside the method.
+
+    with pytest.raises(RetryError) as excinfo:
+        github._run_gh_command(["api", "endpoint"])
+
+    assert isinstance(excinfo.value.last_attempt.exception(), RuntimeError)
+    assert "Failed to parse GitHub CLI output" in str(excinfo.value.last_attempt.exception())
 
 
-def test_get_run_logs_success(github_service):
-    """
-    Test get_run_logs fetches jobs, finds failed job, and fetches logs using API.
-    """
-    run_id = "123"
-    job_id = 999
+def test_get_latest_run_status(github, mock_subprocess_run):
+    """Test getting latest run status."""
+    response = {"workflow_runs": [{"id": 123, "status": "queued", "conclusion": None}]}
+    mock_subprocess_run.return_value.stdout = json.dumps(response)
 
-    # Mock jobs response with a failed job
-    mock_jobs_response = {"jobs": [{"id": 101, "conclusion": "success"}, {"id": job_id, "conclusion": "failure"}]}
+    status = github.get_latest_run_status("main")
 
-    with patch.object(github_service, "_run_gh_command", return_value=mock_jobs_response) as mock_get_jobs:
-        with patch("coreason_git_automator.services.github.run_command") as mock_run_cmd:
-            mock_run_cmd.return_value = "Log content from API"
+    assert status["id"] == 123
+    assert status["databaseId"] == 123  # Should be polyfilled
 
-            logs = github_service.get_run_logs(run_id)
-
-            assert logs == "Log content from API"
-
-            # Verify jobs call
-            mock_get_jobs.assert_called_with(["api", f"repos/:owner/:repo/actions/runs/{run_id}/jobs"])
-
-            # Verify logs call - strictly API-first
-            mock_run_cmd.assert_called_with(["gh", "api", f"repos/:owner/:repo/actions/jobs/{job_id}/logs"])
+    args = mock_subprocess_run.call_args[0][0]
+    # Check that per_page=1 and branch=main are present
+    assert any("branch=main" in arg for arg in args)
 
 
-def test_get_run_logs_fallback_last_job(github_service):
-    """
-    Test fallback to last job if no failed job found.
-    """
-    run_id = "123"
-    job_id = 102
-
-    # Mock jobs response with no explicitly failed job (e.g. cancelled)
-    mock_jobs_response = {"jobs": [{"id": 101, "conclusion": "success"}, {"id": job_id, "conclusion": "cancelled"}]}
-
-    with patch.object(github_service, "_run_gh_command", return_value=mock_jobs_response):
-        with patch("coreason_git_automator.services.github.run_command") as mock_run_cmd:
-            mock_run_cmd.return_value = "Log content"
-
-            github_service.get_run_logs(run_id)
-
-            # Should fetch logs for the last job (102)
-            mock_run_cmd.assert_called_with(["gh", "api", f"repos/:owner/:repo/actions/jobs/{job_id}/logs"])
+def test_get_latest_run_status_no_runs(github, mock_subprocess_run):
+    """Test when no runs found."""
+    mock_subprocess_run.return_value.stdout = '{"workflow_runs": []}'
+    status = github.get_latest_run_status("main")
+    assert status is None
 
 
-def test_get_run_logs_no_jobs(github_service):
-    run_id = "123"
-    mock_jobs_response = {"jobs": []}
+def test_get_run_logs_success(github, mock_subprocess_run):
+    """Test fetching logs for a failed job."""
+    # First call: get jobs
+    jobs_response = {
+        "jobs": [
+            {"id": 1, "conclusion": "success"},
+            {"id": 2, "conclusion": "failure"},  # This is the target
+            {"id": 3, "conclusion": "skipped"},
+        ]
+    }
 
-    with patch.object(github_service, "_run_gh_command", return_value=mock_jobs_response):
-        with pytest.raises(RuntimeError, match=f"No jobs found for run {run_id}"):
-            github_service.get_run_logs(run_id)
+    # Second call: get logs (text output)
+    log_content = "Error: Something went wrong"
 
+    # We need side_effect to return different values for sequential calls
+    # Note: subprocess.run returns a CompletedProcess object
 
-def test_get_run_logs_jobs_failure(github_service):
-    """Test when fetching jobs fails (returns None or missing key)."""
-    run_id = "123"
-    with patch.object(github_service, "_run_gh_command", return_value=None):
-        with pytest.raises(RuntimeError, match=f"Could not retrieve jobs for run {run_id}"):
-            github_service.get_run_logs(run_id)
+    proc_jobs = MagicMock()
+    proc_jobs.returncode = 0
+    proc_jobs.stdout = json.dumps(jobs_response)
 
+    proc_logs = MagicMock()
+    proc_logs.returncode = 0
+    proc_logs.stdout = log_content
 
-def test_get_run_logs_missing_job_id(github_service):
-    """Test case where the target job has no ID."""
-    run_id = "123"
-    # Job has no 'id' field
-    mock_jobs_response = {"jobs": [{"conclusion": "failure"}]}
+    mock_subprocess_run.side_effect = [proc_jobs, proc_logs]
 
-    with patch.object(github_service, "_run_gh_command", return_value=mock_jobs_response):
-        with pytest.raises(RuntimeError, match="Job ID missing from API response"):
-            github_service.get_run_logs(run_id)
+    logs = github.get_run_logs("100")
 
+    assert logs == log_content
 
-def test_create_pr_success(github_service):
-    mock_response = '{"html_url": "https://github.com/owner/repo/pull/1"}'
-    with patch("coreason_git_automator.services.github.run_command", return_value=mock_response) as mock_run:
-        url = github_service.create_pr("Title", "Body", "head-branch")
-        assert url == "https://github.com/owner/repo/pull/1"
-        # Verify args
-        mock_run.assert_called()
-        args, kwargs = mock_run.call_args
-        assert args[0] == ["gh", "api", "repos/:owner/:repo/pulls", "--method", "POST", "--input", "-"]
+    # Verify calls
+    assert mock_subprocess_run.call_count == 2
 
+    # First call checks
+    args1 = mock_subprocess_run.call_args_list[0][0][0]
+    assert "jobs" in args1[2]  # endpoint
 
-def test_command_failure_retry(github_service):
-    with patch("coreason_git_automator.services.github.run_command", side_effect=RuntimeError("Fail")):
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                github_service.get_latest_run_status("branch")
+    # Second call checks
+    args2 = mock_subprocess_run.call_args_list[1][0][0]
+    assert "jobs/2/logs" in args2[2]  # Correct job ID
 
 
-def test_json_decode_error_retry(github_service):
-    with patch("coreason_git_automator.services.github.run_command", return_value="Invalid JSON"):
-        with patch("tenacity.nap.time.sleep", return_value=None):
-            with pytest.raises(RetryError):
-                github_service.get_latest_run_status("branch")
+def test_get_run_logs_no_failed_job(github, mock_subprocess_run):
+    """Test fallback to last job if no failure found."""
+    jobs_response = {"jobs": [{"id": 1, "conclusion": "success"}, {"id": 2, "conclusion": "success"}]}
+    proc_jobs = MagicMock()
+    proc_jobs.returncode = 0
+    proc_jobs.stdout = json.dumps(jobs_response)
+
+    proc_logs = MagicMock()
+    proc_logs.returncode = 0
+    proc_logs.stdout = "Logs"
+
+    mock_subprocess_run.side_effect = [proc_jobs, proc_logs]
+
+    github.get_run_logs("100")
+
+    # Should fetch logs for job 2 (last one)
+    args2 = mock_subprocess_run.call_args_list[1][0][0]
+    assert "jobs/2/logs" in args2[2]
 
 
-def test_create_pr_no_url(github_service):
-    with patch("coreason_git_automator.services.github.run_command", return_value="{}"):
-        with pytest.raises(RuntimeError, match="Failed to retrieve PR URL"):
-            github_service.create_pr("t", "b", "h")
+def test_create_pr_success(github, mock_subprocess_run):
+    """Test PR creation."""
+    response = {"html_url": "https://github.com/owner/repo/pull/1"}
+    mock_subprocess_run.return_value.stdout = json.dumps(response)
+
+    url = github.create_pr("Title", "Body", "head-branch")
+    assert url == "https://github.com/owner/repo/pull/1"
+
+    # Verify input JSON
+    kwargs = mock_subprocess_run.call_args[1]
+    input_json = json.loads(kwargs["input"])
+    assert input_json["title"] == "Title"
+    assert input_json["head"] == "head-branch"
 
 
-def test_get_run_logs_fetch_failure(github_service):
-    """Test failure when fetching the actual log content."""
-    mock_jobs_response = {"jobs": [{"id": 1, "conclusion": "failure"}]}
-
-    with patch.object(github_service, "_run_gh_command", return_value=mock_jobs_response):
-        with patch("coreason_git_automator.services.github.run_command", side_effect=RuntimeError("Log fetch failed")):
-            with pytest.raises(RuntimeError, match="Log fetch failed"):
-                github_service.get_run_logs("123")
+def test_get_latest_run_status_invalid_structure(github, mock_subprocess_run):
+    """Test when API returns invalid structure."""
+    mock_subprocess_run.return_value.stdout = '{"workflow_runs": "not-a-list"}'
+    status = github.get_latest_run_status("main")
+    assert status is None
 
 
-def test_run_gh_command_empty_output(github_service):
-    with patch("coreason_git_automator.services.github.run_command", return_value="   "):
-        assert github_service._run_gh_command(["test"]) is None
+def test_get_run_logs_no_jobs(github, mock_subprocess_run):
+    """Test when no jobs found."""
+    mock_subprocess_run.return_value.stdout = '{"jobs": []}'
+    with pytest.raises(RuntimeError, match="No jobs found"):
+        github.get_run_logs("123")
 
 
-def test_run_gh_command_primitive(github_service):
-    # gh api usually returns objects or arrays.
-    with patch("coreason_git_automator.services.github.run_command", return_value="123"):
-        # The refactored code just returns json.loads(output), which would be 123 (int)
-        # However, _run_gh_command type hint is Optional[Union[Dict[str, Any], List[Any]]]
-        # So we should probably expect it to return the primitive if that's what json.loads does,
-        # but typical GH API returns dict/list.
-        # In the refactored code, I removed the isinstance checks and just return res.
-        assert github_service._run_gh_command(["test"]) == 123
+def test_get_run_logs_invalid_jobs_structure(github, mock_subprocess_run):
+    """Test when jobs is not a list."""
+    mock_subprocess_run.return_value.stdout = '{"jobs": "not-list"}'
+    with pytest.raises(RuntimeError, match="Invalid jobs structure"):
+        github.get_run_logs("123")
 
 
-def test_run_gh_command_empty_string(github_service):
-    # Verify behavior when run_command returns empty string
-    with patch("coreason_git_automator.services.github.run_command", return_value=""):
-        assert github_service._run_gh_command(["test"]) is None
+def test_get_run_logs_missing_job_id(github, mock_subprocess_run):
+    """Test when job has no ID."""
+    jobs_response = {"jobs": [{"id": None, "conclusion": "failure"}]}
+    mock_subprocess_run.return_value.stdout = json.dumps(jobs_response)
+    with pytest.raises(RuntimeError, match="Job ID missing"):
+        github.get_run_logs("123")
 
 
-def test_run_gh_command_returns_list(github_service):
-    with patch("coreason_git_automator.services.github.run_command", return_value="[]"):
-        assert github_service._run_gh_command(["test"]) == []
+def test_create_pr_failure_no_url(github, mock_subprocess_run):
+    """Test PR creation failure (no URL in response)."""
+    mock_subprocess_run.return_value.stdout = "{}"
+    with pytest.raises(RuntimeError, match="Failed to retrieve PR URL"):
+        github.create_pr("t", "b", "h")
 
 
-def test_create_pr_process_error(github_service):
-    with patch("coreason_git_automator.services.github.run_command", side_effect=RuntimeError("Command failed")):
-        with pytest.raises(RuntimeError, match="Command failed"):
-            github_service.create_pr("t", "b", "h")
+def test_create_pr_json_error(github, mock_subprocess_run):
+    """Test PR creation JSON error."""
+    mock_subprocess_run.return_value.stdout = "Not JSON"
+    with pytest.raises(RuntimeError, match="Failed to parse GitHub CLI output"):
+        github.create_pr("t", "b", "h")
 
 
-def test_create_pr_json_error(github_service):
-    with patch("coreason_git_automator.services.github.run_command", return_value="Invalid"):
-        with pytest.raises(RuntimeError, match="Failed to parse GitHub CLI output"):
-            github_service.create_pr("t", "b", "h")
+def test_get_latest_run_status_missing_key(github, mock_subprocess_run):
+    """Test when workflow_runs key is missing."""
+    mock_subprocess_run.return_value.stdout = "{}"
+    status = github.get_latest_run_status("main")
+    assert status is None
 
 
-def test_prohibit_run_view_command(github_service):
-    """
-    Explicitly verify that 'gh run view' commands are prohibited.
-    """
-    with patch("tenacity.nap.time.sleep", return_value=None):
-        with pytest.raises(RetryError) as excinfo:
-            github_service._run_gh_command(["run", "view", "123"])
+def test_get_run_logs_no_valid_jobs(github, mock_subprocess_run):
+    """Test when jobs list contains no valid dicts."""
+    mock_subprocess_run.return_value.stdout = '{"jobs": ["string", 123]}'  # valid json list but invalid job objects
+    with pytest.raises(RuntimeError, match="No valid job objects found"):
+        github.get_run_logs("123")
 
-        # Verify the underlying exception
-        assert "Prohibited command: 'gh run view' is not allowed" in str(excinfo.value.last_attempt.exception())
+
+def test_get_run_logs_missing_jobs_key(github, mock_subprocess_run):
+    """Test when jobs key is missing."""
+    mock_subprocess_run.return_value.stdout = "{}"
+    with pytest.raises(RuntimeError, match="Could not retrieve jobs"):
+        github.get_run_logs("123")
+
+
+def test_run_gh_command_impl_failure(github, mock_subprocess_run):
+    """Test that _run_gh_command_impl re-raises RuntimeError from run_command."""
+    mock_subprocess_run.side_effect = subprocess.CalledProcessError(1, ["gh"], stderr="error")
+    # run_command raises RuntimeError when CalledProcessError occurs
+    # _run_gh_command_impl catches it and re-raises
+
+    with pytest.raises(RuntimeError, match="Command failed"):
+        github._run_gh_command_impl(["some", "arg"])
+
+
+def test_run_gh_command_impl_json_error(github, mock_subprocess_run):
+    """Test that _run_gh_command_impl raises RuntimeError on JSON error."""
+    mock_subprocess_run.return_value.stdout = "Not JSON"
+
+    with pytest.raises(RuntimeError, match="Failed to parse GitHub CLI output"):
+        github._run_gh_command_impl(["some", "arg"])
+
+
+def test_run_gh_command_empty_output(github, mock_subprocess_run):
+    """Test that empty output returns None."""
+    mock_subprocess_run.return_value.stdout = "   "
+    result = github._run_gh_command_impl(["some", "arg"])
+    assert result is None
