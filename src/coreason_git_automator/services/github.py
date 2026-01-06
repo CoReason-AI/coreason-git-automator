@@ -93,16 +93,23 @@ class GitHubService(ExternalTool):
             raise RuntimeError(f"Could not retrieve jobs for run {run_id}")
 
         jobs = data["jobs"]
+        if not isinstance(jobs, list):
+            raise RuntimeError(f"Invalid jobs structure: expected list, got {type(jobs).__name__}")
+
         if not jobs:
             raise RuntimeError(f"No jobs found for run {run_id}")
 
         # 2. Find the failed job
-        target_job = next((j for j in jobs if j.get("conclusion") == "failure"), None)
+        # Filter out non-dict items first to prevent AttributeError
+        valid_jobs = [j for j in jobs if isinstance(j, dict)]
+        target_job = next((j for j in valid_jobs if j.get("conclusion") == "failure"), None)
 
         # If no failed job is found (e.g., in progress or cancelled), default to the last job
         if not target_job:
+            if not valid_jobs:
+                raise RuntimeError("No valid job objects found in response")
             logger.warning(f"No failed job found for run {run_id}. Fetching logs for the last job.")
-            target_job = jobs[-1]
+            target_job = valid_jobs[-1]
 
         job_id = target_job.get("id")
         if not job_id:
