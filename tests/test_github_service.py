@@ -146,8 +146,6 @@ def test_create_pr_success(github_service):
         url = github_service.create_pr("Title", "Body", "head-branch")
         assert url == "https://github.com/owner/repo/pull/1"
         # Verify args
-        # Note: We can't easily inspect input_text passed to run_command with simple assert_called_with
-        # But we can check the command args
         mock_run.assert_called()
         args, kwargs = mock_run.call_args
         assert args[0] == ["gh", "api", "repos/:owner/:repo/pulls", "--method", "POST", "--input", "-"]
@@ -189,14 +187,14 @@ def test_run_gh_command_empty_output(github_service):
 
 
 def test_run_gh_command_primitive(github_service):
-    # gh api usually returns objects or arrays. If it returned a primitive,
-    # _run_gh_command returns None (as per `if isinstance(res, dict)` check, and `list` check added implicitly?)
-    # Wait, the code says:
-    # if isinstance(res, dict): return res
-    # if isinstance(res, list): return res
-    # return None
+    # gh api usually returns objects or arrays.
     with patch("coreason_git_automator.services.github.run_command", return_value="123"):
-        assert github_service._run_gh_command(["test"]) is None
+        # The refactored code just returns json.loads(output), which would be 123 (int)
+        # However, _run_gh_command type hint is Optional[Union[Dict[str, Any], List[Any]]]
+        # So we should probably expect it to return the primitive if that's what json.loads does,
+        # but typical GH API returns dict/list.
+        # In the refactored code, I removed the isinstance checks and just return res.
+        assert github_service._run_gh_command(["test"]) == 123
 
 
 def test_run_gh_command_empty_string(github_service):
@@ -220,3 +218,15 @@ def test_create_pr_json_error(github_service):
     with patch("coreason_git_automator.services.github.run_command", return_value="Invalid"):
         with pytest.raises(RuntimeError, match="Failed to parse GitHub CLI output"):
             github_service.create_pr("t", "b", "h")
+
+
+def test_prohibit_run_view_command(github_service):
+    """
+    Explicitly verify that 'gh run view' commands are prohibited.
+    """
+    with patch("tenacity.nap.time.sleep", return_value=None):
+        with pytest.raises(RetryError) as excinfo:
+            github_service._run_gh_command(["run", "view", "123"])
+
+        # Verify the underlying exception
+        assert "Prohibited command: 'gh run view' is not allowed" in str(excinfo.value.last_attempt.exception())

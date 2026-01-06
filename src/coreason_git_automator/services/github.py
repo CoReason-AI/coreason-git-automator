@@ -9,7 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
 import json
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, List, Optional, Union, cast
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -21,32 +21,42 @@ from coreason_git_automator.utils.process import run_command
 class GitHubService(ExternalTool):
     """
     Service for interacting with GitHub via the gh CLI.
+    Strictly uses the GitHub API (`gh api`) for all interactions to ensure
+    robustness and structured data handling.
     """
 
     def __init__(self, executable: str = "gh") -> None:
         super().__init__(executable)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=5))  # type: ignore
-    def _run_gh_command(self, args: list[str]) -> Optional[Dict[str, Any]]:
-        """Helper to run gh commands and return JSON output."""
+    def _run_gh_command(self, args: list[str]) -> Optional[Union[Dict[str, Any], List[Any]]]:
+        """
+        Helper to run gh commands and return JSON output.
+        Wraps _run_gh_command_impl for retries.
+        """
         return self._run_gh_command_impl(args)
 
-    def _run_gh_command_impl(self, args: list[str]) -> Optional[Dict[str, Any]]:
+    def _run_gh_command_impl(self, args: list[str]) -> Optional[Union[Dict[str, Any], List[Any]]]:
+        """
+        Executes a gh command.
+        Enforces API-first discipline by preventing usage of 'run view'.
+        """
+        # Defensive check: Ensure we are not using 'run view'
+        if "run" in args and "view" in args:
+            raise RuntimeError("Prohibited command: 'gh run view' is not allowed. Use 'gh api' instead.")
+
         try:
             cmd = ["gh"] + args
             output = run_command(cmd)
-            # Try to parse JSON. If empty, it will raise JSONDecodeError.
+
+            # If the output is empty, return None
             if not output.strip():
                 return None
+
+            # Parse JSON response
             res = json.loads(output)
-            if isinstance(res, dict):
-                return res
-            if isinstance(res, list):
-                # When run list returns a list, we might want to wrap it or handle it.
-                # However, the calling functions expect a list or dict.
-                # Here we just return the raw parsed JSON (list or dict).
-                return res  # type: ignore
-            return None
+            return cast(Union[Dict[str, Any], List[Any]], res)
+
         except RuntimeError:
             # Logging already handled in run_command
             raise
@@ -59,37 +69,36 @@ class GitHubService(ExternalTool):
         Gets the status of the latest workflow run for a branch.
         Uses `gh api repos/:owner/:repo/actions/runs?branch=<branch>&per_page=1`
         """
-        # We need to determine owner/repo. For now, we assume the user is in the repo directory
-        # and gh can infer it. `gh api` supports `:owner/:repo` placeholders.
-
         endpoint = f"repos/:owner/:repo/actions/runs?branch={branch}&per_page=1"
         data = self._run_gh_command(["api", endpoint])
 
-        if not data or "workflow_runs" not in data:
+        if not data or not isinstance(data, dict) or "workflow_runs" not in data:
             return None
 
         runs = data.get("workflow_runs", [])
-        if not runs:
+        if not runs or not isinstance(runs, list):
             return None
 
-        # Map API response fields to what CLI expects
-        # API returns 'id', 'status', 'conclusion'
-        # CLI expects 'databaseId' (from `gh run list --json`), 'status', 'conclusion'
-        # We map 'id' -> 'databaseId' to maintain compatibility
+        # Return the first run
         run = runs[0]
-        run["databaseId"] = run.get("id")
+        # Ensure databaseId is present (aliasing id) if not already.
+        # Logic matches previous behavior: implicitly set databaseId to id even if id is missing (None)
+        # to satisfy existing tests expecting {"databaseId": None} for empty runs.
+        if "databaseId" not in run:
+            run["databaseId"] = run.get("id")
+
         return cast(Dict[str, Any], run)
 
     def get_run_logs(self, run_id: str) -> str:
         """
         Fetches the logs for a specific run by identifying the failed job.
-        Strictly uses `gh api` to adhere to API-first requirements.
+        Strictly uses `gh api`.
         """
         # 1. Get jobs for the run
         endpoint_jobs = f"repos/:owner/:repo/actions/runs/{run_id}/jobs"
         data = self._run_gh_command(["api", endpoint_jobs])
 
-        if not data or "jobs" not in data:
+        if not data or not isinstance(data, dict) or "jobs" not in data:
             raise RuntimeError(f"Could not retrieve jobs for run {run_id}")
 
         jobs = data["jobs"]
@@ -100,7 +109,7 @@ class GitHubService(ExternalTool):
             raise RuntimeError(f"No jobs found for run {run_id}")
 
         # 2. Find the failed job
-        # Filter out non-dict items first to prevent AttributeError
+        # Filter out non-dict items first
         valid_jobs = [j for j in jobs if isinstance(j, dict)]
         target_job = next((j for j in valid_jobs if j.get("conclusion") == "failure"), None)
 
@@ -115,10 +124,13 @@ class GitHubService(ExternalTool):
         if not job_id:
             raise RuntimeError("Job ID missing from API response")
 
-        # 3. Fetch logs for the specific job
-        # This endpoint returns raw text (follows redirect to log file)
+        # 3. Fetch logs for the specific job using run_command directly
+        # We don't use _run_gh_command here because the output is text (logs), not JSON.
         endpoint_logs = f"repos/:owner/:repo/actions/jobs/{job_id}/logs"
-        return run_command(["gh", "api", endpoint_logs])
+
+        # Explicitly constructing the command to ensure we are using gh api
+        cmd = ["gh", "api", endpoint_logs]
+        return run_command(cmd)
 
     def create_pr(self, title: str, body: str, head_branch: str, base_branch: str = "main") -> str:
         """
