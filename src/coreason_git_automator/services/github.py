@@ -46,7 +46,7 @@ class GitHubService(ExternalTool):
             raise RuntimeError("Prohibited command: 'gh run view' is not allowed. Use 'gh api' instead.")
 
         try:
-            cmd = ["gh"] + args
+            cmd = [self.executable] + args
             output = run_command(cmd)
 
             # If the output is empty, return None
@@ -129,7 +129,7 @@ class GitHubService(ExternalTool):
         endpoint_logs = f"repos/:owner/:repo/actions/jobs/{job_id}/logs"
 
         # Explicitly constructing the command to ensure we are using gh api
-        cmd = ["gh", "api", endpoint_logs]
+        cmd = [self.executable, "api", endpoint_logs]
         return run_command(cmd)
 
     def create_pr(self, title: str, body: str, head_branch: str, base_branch: str = "main") -> str:
@@ -142,7 +142,7 @@ class GitHubService(ExternalTool):
         json_payload = json.dumps(payload)
 
         try:
-            cmd = ["gh", "api", endpoint, "--method", "POST", "--input", "-"]
+            cmd = [self.executable, "api", endpoint, "--method", "POST", "--input", "-"]
             output = run_command(cmd, input_text=json_payload)
             res = json.loads(output)
             if isinstance(res, dict) and "html_url" in res:
