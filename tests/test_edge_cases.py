@@ -173,8 +173,19 @@ def test_github_logs_unicode(github_service):
     Edge Case: Logs contain unicode characters.
     """
     unicode_log = "Error: 🐛 in code\nFix it! 🚀"
+    mock_jobs_response = {"jobs": [{"id": 999, "conclusion": "failure"}]}
+
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(stdout=unicode_log, returncode=0)
+        # We need to mock 2 calls: one for jobs, one for logs
+        def side_effect(args, **kwargs):
+            # Check logs FIRST because URL contains "jobs" too
+            if "logs" in args[2]:
+                return MagicMock(stdout=unicode_log, returncode=0)
+            if "jobs" in args[2]:  # crude check for endpoint
+                return MagicMock(stdout=json.dumps(mock_jobs_response), returncode=0)
+            return MagicMock(stdout="", returncode=0)
+
+        mock_run.side_effect = side_effect
 
         logs = github_service.get_run_logs("123")
         assert "🐛" in logs
