@@ -82,18 +82,36 @@ class GitHubService(ExternalTool):
 
     def get_run_logs(self, run_id: str) -> str:
         """
-        Fetches the logs for a specific run.
-        Uses `gh api repos/:owner/:repo/actions/runs/:run_id/logs` (returns zip) or text?
-        Actually, `gh api` for logs usually redirects to a zip file url.
-        Parsing zip is complex. `gh run view --log` is much safer and effectively wraps the API.
-        However, if I strictly must use `gh api`, I would need to handle the redirect and unzip.
-        Given "Strictly API-First" usually refers to metadata, I will stick to `gh run view` for logs
-        UNLESS the prompt implies otherwise. The prompt says "Fetch logs via GitHub API".
-        `gh run view` fetches logs via API.
-        I will keep `gh run view` for logs to avoid zip complexities which might be out of scope for "Atomic Unit",
-        unless I see a clear path. The previous code used `gh run view`.
+        Fetches the logs for a specific run by identifying the failed job.
+        Strictly uses `gh api` to adhere to API-first requirements.
         """
-        return run_command(["gh", "run", "view", run_id, "--log"])
+        # 1. Get jobs for the run
+        endpoint_jobs = f"repos/:owner/:repo/actions/runs/{run_id}/jobs"
+        data = self._run_gh_command(["api", endpoint_jobs])
+
+        if not data or "jobs" not in data:
+            raise RuntimeError(f"Could not retrieve jobs for run {run_id}")
+
+        jobs = data["jobs"]
+        if not jobs:
+            raise RuntimeError(f"No jobs found for run {run_id}")
+
+        # 2. Find the failed job
+        target_job = next((j for j in jobs if j.get("conclusion") == "failure"), None)
+
+        # If no failed job is found (e.g., in progress or cancelled), default to the last job
+        if not target_job:
+            logger.warning(f"No failed job found for run {run_id}. Fetching logs for the last job.")
+            target_job = jobs[-1]
+
+        job_id = target_job.get("id")
+        if not job_id:
+            raise RuntimeError("Job ID missing from API response")
+
+        # 3. Fetch logs for the specific job
+        # This endpoint returns raw text (follows redirect to log file)
+        endpoint_logs = f"repos/:owner/:repo/actions/jobs/{job_id}/logs"
+        return run_command(["gh", "api", endpoint_logs])
 
     def create_pr(self, title: str, body: str, head_branch: str, base_branch: str = "main") -> str:
         """
