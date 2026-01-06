@@ -12,7 +12,6 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from tenacity import RetryError
 
 from coreason_git_automator.services.github import GitHubService
 
@@ -53,15 +52,10 @@ def test_jobs_mixed_types(github_service):
     """
     Edge Case: `jobs` list contains mixed types (dicts and strings/None).
     """
-    mixed_jobs = {
-        "jobs": [
-            "invalid_string_entry",
-            None,
-            {"id": 123, "conclusion": "failure"}
-        ]
-    }
+    mixed_jobs = {"jobs": ["invalid_string_entry", None, {"id": 123, "conclusion": "failure"}]}
 
     with patch("subprocess.run") as mock_run:
+
         def side_effect(args, **kwargs):
             # Mock jobs call
             if "jobs" in args[2] and "logs" not in args[2]:
@@ -88,7 +82,7 @@ def test_gh_api_returns_list_at_root(github_service):
     """
     with patch("subprocess.run") as mock_run:
         # API returns a list (e.g. `[]`)
-        mock_run.return_value = MagicMock(stdout='[]', returncode=0)
+        mock_run.return_value = MagicMock(stdout="[]", returncode=0)
 
         status = github_service.get_latest_run_status("branch")
         assert status is None
