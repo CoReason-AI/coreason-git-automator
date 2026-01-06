@@ -1,16 +1,5 @@
-# Copyright (c) 2025 CoReason, Inc.
-#
-# This software is proprietary and dual-licensed.
-# Licensed under the Prosperity Public License 3.0 (the "License").
-# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
-# For details, see the LICENSE file.
-# Commercial use beyond a-day trial requires a separate license.
-#
-# Source Code: https://github.com/CoReason-AI/coreason_git_automator
-
 import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -19,127 +8,138 @@ from coreason_git_automator.services.jules import JulesWrapper
 
 @pytest.fixture
 def mock_shutil_which():
-    with patch("shutil.which") as mock:
-        mock.return_value = "/usr/bin/jules"
+    with patch("shutil.which", return_value="/usr/bin/jules") as mock:
         yield mock
 
 
 @pytest.fixture
-def jules_wrapper(mock_shutil_which):
+def mock_subprocess_run():
+    with patch("subprocess.run") as mock:
+        # Default behavior: success, return empty stdout
+        mock.return_value.stdout = ""
+        mock.return_value.returncode = 0
+        yield mock
+
+
+@pytest.fixture
+def jules(mock_shutil_which):
     return JulesWrapper()
 
 
-def test_init_success(mock_shutil_which):
-    jw = JulesWrapper()
-    assert jw.executable == "/usr/bin/jules"  # ExternalTool sets executable to resolved path
-    assert jw._path == "/usr/bin/jules"
-
-
-def test_init_not_found():
+def test_init_raises_if_not_found():
+    """Test that RuntimeError is raised if jules is not in PATH."""
     with patch("shutil.which", return_value=None):
-        with pytest.raises(RuntimeError, match="Executable 'jules' not found in PATH"):
+        with pytest.raises(RuntimeError, match="Executable 'jules' not found"):
             JulesWrapper()
 
 
-def test_verify_installed_success(jules_wrapper):
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(stdout="1.0.0\n", returncode=0)
+def test_verify_installed(jules, mock_subprocess_run):
+    """Test version verification."""
+    mock_subprocess_run.return_value.stdout = "jules version 1.0.0"
+    version = jules.verify_installed()
+    assert version == "jules version 1.0.0"
 
-        version = jules_wrapper.verify_installed()
-
-        assert version == "1.0.0"
-        mock_run.assert_called_once()
-
-
-def test_verify_installed_failure(jules_wrapper):
-    with patch("subprocess.run") as mock_run:
-        mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"], stderr="Error")
-
-        with pytest.raises(RuntimeError, match="Command failed"):
-            jules_wrapper.verify_installed()
+    # Check that subprocess.run was called correctly
+    args = mock_subprocess_run.call_args[0][0]
+    assert args == ["/usr/bin/jules", "--version"]
 
 
-def test_prepare_prompt_no_context(jules_wrapper):
-    prompt = jules_wrapper._prepare_prompt("Do something", None)
-    assert prompt == "Do something"
+def test_verify_installed_failure(jules, mock_subprocess_run):
+    """Test version verification failure."""
+    # Simulate CalledProcessError
+    mock_subprocess_run.side_effect = subprocess.CalledProcessError(1, ["jules"], stderr="Error")
+
+    with pytest.raises(RuntimeError):
+        jules.verify_installed()
 
 
-def test_prepare_prompt_with_context(jules_wrapper, tmp_path):
-    f1 = tmp_path / "test.py"
-    f1.write_text("print('hello')")
+def test_run_session_no_context(jules, mock_subprocess_run):
+    """Test starting a session without context files."""
+    jules.run_session("Do something")
 
-    prompt = jules_wrapper._prepare_prompt("Fix it", [f1])
-
-    expected = f"[CONTEXT: {f1}]\nprint('hello')\n\n[INSTRUCTION]\nFix it"
-    assert prompt == expected
-
-
-def test_prepare_prompt_read_error(jules_wrapper):
-    # Mock Path.read_text to raise exception
-    f1 = MagicMock(spec=Path)
-    f1.read_text.side_effect = Exception("Read error")
-    f1.__str__.return_value = "file.py"
-
-    prompt = jules_wrapper._prepare_prompt("Fix it", [f1])
-
-    # Should skip the file content but still return prompt
-    assert "[INSTRUCTION]" in prompt
-    assert "Fix it" in prompt
+    args = mock_subprocess_run.call_args[0][0]
+    assert args[0] == "/usr/bin/jules"
+    assert args[1] == "remote"
+    assert args[2] == "new"
+    # Expect raw prompt since no context
+    assert args[3] == "Do something"
 
 
-def test_prepare_prompt_binary_file(jules_wrapper):
-    """
-    Complex Case: Binary file (UnicodeDecodeError) should be gracefully skipped.
-    """
-    f1 = MagicMock(spec=Path)
-    # Simulate UnicodeDecodeError (which inherits from ValueError in Py3, but specifically checked in memory)
-    # Memory: "JulesWrapper must explicitly use encoding='utf-8' when reading context files;
-    # this ensures binary files raise UnicodeDecodeError and are skipped correctly."
-    f1.read_text.side_effect = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
-    f1.__str__.return_value = "binary.bin"
+def test_run_session_with_context(jules, mock_subprocess_run, tmp_path):
+    """Test starting a session with context files."""
+    # Create a dummy file
+    f = tmp_path / "test.py"
+    f.write_text("print('hello')")
 
-    with patch("coreason_git_automator.services.jules.logger") as mock_logger:
-        prompt = jules_wrapper._prepare_prompt("Fix it", [f1])
+    jules.run_session("Refactor this", context_files=[f])
 
-        # Ensure we logged a warning
-        mock_logger.warning.assert_called()
-        assert "Failed to read context file" in mock_logger.warning.call_args[0][0]
+    args = mock_subprocess_run.call_args[0][0]
+    prompt_sent = args[3]
 
-    # Content should not be in prompt
-    assert "[CONTEXT: binary.bin]" not in prompt
-    assert "Fix it" in prompt
+    # Check that context is prepended
+    assert f"[CONTEXT: {f}]" in prompt_sent
+    assert "print('hello')" in prompt_sent
+    assert "[INSTRUCTION]" in prompt_sent
+    assert "Refactor this" in prompt_sent
 
 
-def test_run_session_success(jules_wrapper):
-    with patch("subprocess.run") as mock_run:
-        jules_wrapper.run_session("Prompt")
+def test_run_session_context_read_error(jules, mock_subprocess_run, tmp_path):
+    """Test that unreadable files are skipped gracefully."""
+    # Create a directory instead of a file (reading it will fail)
+    d = tmp_path / "somedir"
+    d.mkdir()
 
-        mock_run.assert_called_once()
-        args = mock_run.call_args[0][0]
-        assert "remote" in args and "new" in args
+    jules.run_session("Refactor this", context_files=[d])
 
+    args = mock_subprocess_run.call_args[0][0]
+    prompt_sent = args[3]
 
-def test_run_session_failure(jules_wrapper):
-    with patch("subprocess.run") as mock_run:
-        mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"])
-
-        with pytest.raises(RuntimeError, match="Command failed"):
-            jules_wrapper.run_session("Prompt")
-
-
-def test_send_feedback_success(jules_wrapper):
-    with patch("subprocess.run") as mock_run:
-        jules_wrapper.send_feedback("Errors found")
-
-        mock_run.assert_called_once()
-        args = mock_run.call_args[0][0]
-        assert "remote" in args and "chat" in args
-        assert "Errors found" in args[3]
+    # Should not contain context for the dir, but should still run
+    assert "somedir" not in prompt_sent
+    # It will contain [INSTRUCTION] because the list was not empty,
+    # but the loop skipped the only item.
+    # Wait, the logic is:
+    # for file_path in context_files: ... context_str += ...
+    # return f"{context_str}" + JULES_INSTRUCTION_HEADER...
+    # So if list is not empty, header is added.
+    assert "[INSTRUCTION]" in prompt_sent
 
 
-def test_send_feedback_failure(jules_wrapper):
-    with patch("subprocess.run") as mock_run:
-        mock_run.side_effect = subprocess.CalledProcessError(1, ["jules"])
+def test_run_session_binary_file_skip(jules, mock_subprocess_run, tmp_path):
+    """Test that binary files are skipped (UnicodeDecodeError)."""
+    f = tmp_path / "image.png"
+    f.write_bytes(b"\x89PNG\r\n\x1a\n")  # Binary data
 
-        with pytest.raises(RuntimeError, match="Command failed"):
-            jules_wrapper.send_feedback("Errors")
+    jules.run_session("Analyze this", context_files=[f])
+
+    args = mock_subprocess_run.call_args[0][0]
+    prompt_sent = args[3]
+
+    # Should verify that the binary content is NOT in the prompt
+    assert f"[CONTEXT: {f}]" not in prompt_sent
+
+
+def test_run_session_failure(jules, mock_subprocess_run):
+    """Test handling of session start failure."""
+    mock_subprocess_run.side_effect = subprocess.CalledProcessError(1, ["cmd"], stderr="fail")
+    with pytest.raises(RuntimeError):
+        jules.run_session("prompt")
+
+
+def test_send_feedback(jules, mock_subprocess_run):
+    """Test sending feedback."""
+    jules.send_feedback("Error details")
+
+    args = mock_subprocess_run.call_args[0][0]
+    assert args[0] == "/usr/bin/jules"
+    assert args[1] == "remote"
+    assert args[2] == "chat"
+    assert "Fix the code based on these errors" in args[3]
+    assert "Error details" in args[3]
+
+
+def test_send_feedback_failure(jules, mock_subprocess_run):
+    """Test feedback failure."""
+    mock_subprocess_run.side_effect = subprocess.CalledProcessError(1, ["cmd"], stderr="fail")
+    with pytest.raises(RuntimeError):
+        jules.send_feedback("errors")

@@ -38,7 +38,8 @@ def run_command(
             cmd,
             input=input_text,
             capture_output=capture_output,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=check,
         )
         return result.stdout.strip() if result.stdout else ""
