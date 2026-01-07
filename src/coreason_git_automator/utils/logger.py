@@ -12,35 +12,36 @@ import sys
 from pathlib import Path
 
 from loguru import logger
+from rich.logging import RichHandler
 
-__all__ = ["logger"]
+__all__ = ["logger", "configure_logging"]
 
-# Remove default handler
-logger.remove()
 
-# Sink 1: Stdout (Human-readable)
-logger.add(
-    sys.stderr,
-    level="INFO",
-    format=(
-        "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-        "<level>{level: <8}</level> | "
-        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-        "<level>{message}</level>"
-    ),
-)
+def configure_logging() -> None:
+    """
+    Configures logging with RichHandler for console and rotating file for audit trail.
+    """
+    logger.remove()
 
-# Ensure logs directory exists
-log_path = Path("logs")
-if not log_path.exists():
-    log_path.mkdir(parents=True, exist_ok=True)  # pragma: no cover
+    # Sink 1: Console via Rich (INFO level, visual integration)
+    logger.add(
+        RichHandler(rich_tracebacks=True, markup=True),
+        level="INFO",
+        format="{message}",  # RichHandler handles timestamp/level styling
+    )
 
-# Sink 2: File (JSON, Rotation, Retention)
-logger.add(
-    "logs/app.log",
-    rotation="500 MB",
-    retention="10 days",
-    serialize=True,
-    enqueue=True,
-    level="INFO",
-)
+    # Sink 2: Audit Trail File (DEBUG level, rotating)
+    # Log to logs/coreason_automator.log
+    log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "coreason_automator.log"
+
+    logger.add(
+        str(log_file),
+        rotation="10 MB",
+        retention="10 days",
+        level="DEBUG",
+        enqueue=True,  # Thread-safe
+        backtrace=True,
+        diagnose=True,
+    )
