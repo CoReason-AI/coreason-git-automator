@@ -2,7 +2,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from coreason_git_automator.models import AutomationConfig, DeepSeekCommit
+from coreason_git_automator.config import AutomationConfig
+from coreason_git_automator.models import DeepSeekCommit
 from coreason_git_automator.services.workflow import WorkflowOrchestrator
 
 

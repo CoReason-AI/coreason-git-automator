@@ -5,7 +5,8 @@ import pytest
 from pydantic import SecretStr
 from tenacity import RetryError
 
-from coreason_git_automator.models import AutomationConfig, DeepSeekCommit
+from coreason_git_automator.config import AutomationConfig
+from coreason_git_automator.models import DeepSeekCommit
 from coreason_git_automator.services.ai import DeepSeekClient
 
 
