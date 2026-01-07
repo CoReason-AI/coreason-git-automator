@@ -8,7 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -21,3 +21,10 @@ class AutomationConfig(BaseSettings):
     jules_api_key: SecretStr = Field(alias="JULES_API_KEY")
     github_token: SecretStr = Field(alias="GITHUB_TOKEN")
     deepseek_api_key: SecretStr = Field(alias="DEEPSEEK_API_KEY")
+
+    @field_validator("jules_api_key", "github_token", "deepseek_api_key")
+    @classmethod
+    def validate_non_empty_secret(cls, v: SecretStr) -> SecretStr:
+        if not v.get_secret_value():
+            raise ValueError("Secret cannot be empty")
+        return v
