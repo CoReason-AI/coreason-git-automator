@@ -41,7 +41,7 @@ def test_configure_logging(tmp_path, monkeypatch):
 
     assert log_file.exists()
 
-    content = log_file.read_text()
+    content = log_file.read_text(encoding="utf-8")
 
     # Verify content contains the message
     assert test_message in content

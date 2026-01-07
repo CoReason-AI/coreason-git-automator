@@ -47,4 +47,5 @@ def configure_logging() -> None:
         backtrace=True,
         diagnose=True,
         serialize=True,  # JSON format
+        encoding="utf-8",
     )
