@@ -35,11 +35,7 @@ def test_deepseek_commit_missing_fields():
 def test_deepseek_commit_empty_fields():
     """Test validation prevents empty commit title or body."""
     with pytest.raises(ValidationError) as exc:
-        DeepSeekCommit(
-            commit_title="",
-            commit_body="",
-            branch_name="valid-branch"
-        )
+        DeepSeekCommit(commit_title="", commit_body="", branch_name="valid-branch")
     errors = exc.value.errors()
-    assert any(e['loc'] == ('commit_title',) and 'String should have at least 1 character' in e['msg'] for e in errors)
-    assert any(e['loc'] == ('commit_body',) and 'String should have at least 1 character' in e['msg'] for e in errors)
+    assert any(e["loc"] == ("commit_title",) and "String should have at least 1 character" in e["msg"] for e in errors)
+    assert any(e["loc"] == ("commit_body",) and "String should have at least 1 character" in e["msg"] for e in errors)
