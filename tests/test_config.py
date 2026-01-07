@@ -38,3 +38,17 @@ def test_config_missing_env():
 
         with pytest.raises(ValidationError):
             AutomationConfig()
+
+
+def test_config_empty_env():
+    """Test configuration failure when environment variables are empty strings."""
+    with pytest.MonkeyPatch.context() as m:
+        m.setenv("JULES_API_KEY", "")
+        m.setenv("GITHUB_TOKEN", "")
+        m.setenv("DEEPSEEK_API_KEY", "")
+
+        with pytest.raises(ValidationError) as exc:
+            AutomationConfig()
+
+        errors = str(exc.value)
+        assert "Secret cannot be empty" in errors
