@@ -19,6 +19,9 @@ __all__ = ["logger", "configure_logging"]
 def configure_logging() -> None:
     """
     Configures logging with RichHandler for console and rotating file for audit trail.
+    Adheres to Unified Observability Layer specs:
+    - Console: RichHandler (INFO)
+    - File: logs/app.log (DEBUG, JSON, Rotated 500 MB, Retained 10 days)
     """
     logger.remove()
 
@@ -29,18 +32,19 @@ def configure_logging() -> None:
         format="{message}",  # RichHandler handles timestamp/level styling
     )
 
-    # Sink 2: Audit Trail File (DEBUG level, rotating)
-    # Log to logs/coreason_automator.log
+    # Sink 2: Audit Trail File (DEBUG level, rotating, JSON)
+    # Log to logs/app.log
     log_dir = Path("logs")
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "coreason_automator.log"
+    log_file = log_dir / "app.log"
 
     logger.add(
         str(log_file),
-        rotation="10 MB",
+        rotation="500 MB",
         retention="10 days",
         level="DEBUG",
         enqueue=True,  # Thread-safe
         backtrace=True,
         diagnose=True,
+        serialize=True,  # JSON format
     )

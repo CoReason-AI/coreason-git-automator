@@ -8,6 +8,8 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
+import json
+
 from coreason_git_automator.utils.logger import configure_logging, logger
 
 
@@ -15,21 +17,24 @@ def test_configure_logging(tmp_path, monkeypatch):
     """
     Test that configure_logging sets up handlers and creates files.
     Uses monkeypatch.chdir to run in a temp dir, avoiding Path mocking issues.
+    Verifies JSON output and correct filename.
     """
     # Run in tmp_path so "logs" directory is created there
     monkeypatch.chdir(tmp_path)
 
     configure_logging()
 
-    # Verify directory and file creation
+    # Verify directory creation
     log_dir = tmp_path / "logs"
     assert log_dir.exists()
     assert log_dir.is_dir()
 
-    log_file = log_dir / "coreason_automator.log"
-    # Note: Loguru might lazy-create the file, or create it immediately.
-    # Let's log something to ensure it's flushed.
-    logger.debug("Test audit log")
+    # Target file should be app.log now
+    log_file = log_dir / "app.log"
+
+    # Log something to ensure it's flushed.
+    test_message = "Test audit log JSON"
+    logger.debug(test_message)
 
     # Flush logs by removing handlers (forces flush and close)
     logger.remove()
@@ -37,7 +42,23 @@ def test_configure_logging(tmp_path, monkeypatch):
     assert log_file.exists()
 
     content = log_file.read_text()
-    assert "Test audit log" in content
+
+    # Verify content contains the message
+    assert test_message in content
+
+    # Verify it is valid JSON
+    # Loguru JSON output is one JSON object per line.
+    lines = content.strip().splitlines()
+    assert len(lines) > 0
+    last_line = lines[-1]
+
+    data = json.loads(last_line)
+
+    # Verify the raw message is correct in the record
+    assert data["record"]["message"] == test_message
+
+    # Verify the level is correct
+    assert data["record"]["level"]["name"] == "DEBUG"
 
 
 def test_logger_exports():
