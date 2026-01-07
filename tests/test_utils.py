@@ -8,26 +8,36 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-from pathlib import Path
-
-from coreason_git_automator.utils.logger import logger
+from coreason_git_automator.utils.logger import configure_logging, logger
 
 
-def test_logger_initialization():
-    """Test that the logger is initialized correctly and creates the log directory."""
-    # Since the logger is initialized on import, we check side effects
+def test_configure_logging(tmp_path, monkeypatch):
+    """
+    Test that configure_logging sets up handlers and creates files.
+    Uses monkeypatch.chdir to run in a temp dir, avoiding Path mocking issues.
+    """
+    # Run in tmp_path so "logs" directory is created there
+    monkeypatch.chdir(tmp_path)
 
-    # Check if logs directory creation is handled
-    # Note: running this test might actually create the directory in the test environment
-    # if it doesn't exist.
+    configure_logging()
 
-    log_path = Path("logs")
-    assert log_path.exists()
-    assert log_path.is_dir()
+    # Verify directory and file creation
+    log_dir = tmp_path / "logs"
+    assert log_dir.exists()
+    assert log_dir.is_dir()
 
-    # Verify app.log creation if it was logged to (it might be empty or not created until log)
-    # logger.info("Test log")
-    # assert (log_path / "app.log").exists()
+    log_file = log_dir / "coreason_automator.log"
+    # Note: Loguru might lazy-create the file, or create it immediately.
+    # Let's log something to ensure it's flushed.
+    logger.debug("Test audit log")
+
+    # Flush logs by removing handlers (forces flush and close)
+    logger.remove()
+
+    assert log_file.exists()
+
+    content = log_file.read_text()
+    assert "Test audit log" in content
 
 
 def test_logger_exports():
