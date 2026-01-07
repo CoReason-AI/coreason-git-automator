@@ -41,7 +41,6 @@ def mock_boundaries():
         patch("httpx.Client") as mock_http,
         patch("shutil.which") as mock_which,
         patch("tenacity.nap.time.sleep"),  # Skip tenacity sleeps
-        patch("coreason_git_automator.services.workflow.time.sleep"),  # Skip workflow sleeps
     ):
         # Default behavior: Executables exist
         def which_side_effect(cmd, path=None):
@@ -221,8 +220,7 @@ def test_holistic_self_healing(mock_env, mock_boundaries):
     mock_run.side_effect = side_effect
 
     # Patch time.sleep to speed up test execution
-    with patch("coreason_git_automator.services.workflow.time.sleep"):
-        result = runner.invoke(app, ["start", "Fix the bug"])
+    result = runner.invoke(app, ["start", "Fix the bug"])
 
     # Assertions
     assert result.exit_code == 0
@@ -252,41 +250,40 @@ def test_holistic_context_injection(mock_env, mock_boundaries, tmp_path):
 
     mock_run.side_effect = side_effect
 
-    with patch("coreason_git_automator.services.workflow.time.sleep"):
-        # We only care about the initial Jules call for this test.
-        # But we must ensure it doesn't crash on subsequent calls if monitoring is on.
-        # So we mock a quick success.
-        def side_effect_complete(args, **kwargs):
-            cmd_list = args if isinstance(args, list) else args
-            is_gh = any(c.endswith("gh") for c in cmd_list)
-            # GH Status
-            if (
-                is_gh
-                and "api" in cmd_list
-                and any("actions/runs" in a for a in cmd_list)
-                and not any("jobs" in a for a in cmd_list)
-            ):
-                return MagicMock(
-                    stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success", "id": 999}]}),
-                    returncode=0,
-                )
-            if "git" in cmd_list:  # allow git log/merge/push
-                return MagicMock(stdout="log", returncode=0)
-            # GH PR
-            if is_gh and "api" in cmd_list and any("pulls" in a for a in cmd_list):
-                return MagicMock(
-                    stdout=json.dumps({"html_url": "http://pr"}),
-                    returncode=0,
-                )
-            # Jules version
-            if any("jules" in c for c in cmd_list) and "--version" in cmd_list:
-                return MagicMock(stdout="1.0.0", returncode=0)
+    # We only care about the initial Jules call for this test.
+    # But we must ensure it doesn't crash on subsequent calls if monitoring is on.
+    # So we mock a quick success.
+    def side_effect_complete(args, **kwargs):
+        cmd_list = args if isinstance(args, list) else args
+        is_gh = any(c.endswith("gh") for c in cmd_list)
+        # GH Status
+        if (
+            is_gh
+            and "api" in cmd_list
+            and any("actions/runs" in a for a in cmd_list)
+            and not any("jobs" in a for a in cmd_list)
+        ):
+            return MagicMock(
+                stdout=json.dumps({"workflow_runs": [{"status": "completed", "conclusion": "success", "id": 999}]}),
+                returncode=0,
+            )
+        if "git" in cmd_list:  # allow git log/merge/push
+            return MagicMock(stdout="log", returncode=0)
+        # GH PR
+        if is_gh and "api" in cmd_list and any("pulls" in a for a in cmd_list):
+            return MagicMock(
+                stdout=json.dumps({"html_url": "http://pr"}),
+                returncode=0,
+            )
+        # Jules version
+        if any("jules" in c for c in cmd_list) and "--version" in cmd_list:
+            return MagicMock(stdout="1.0.0", returncode=0)
 
-            return MagicMock(stdout="", returncode=0)
+        return MagicMock(stdout="", returncode=0)
 
-        mock_run.side_effect = side_effect_complete
+    mock_run.side_effect = side_effect_complete
 
-        runner.invoke(app, ["start", "Task", "--context", str(context_file)])
+    runner.invoke(app, ["start", "Task", "--context", str(context_file)])
 
     # Verify the Jules call contains the file content
     jules_calls = [c for c in mock_run.call_args_list if "jules" in str(c) and "remote" in str(c) and "new" in str(c)]
@@ -376,8 +373,7 @@ def test_holistic_persistent_failure(mock_env, mock_boundaries):
 
     mock_run.side_effect = side_effect
 
-    with patch("coreason_git_automator.services.workflow.time.sleep"):
-        result = runner.invoke(app, ["start", "Task"])
+    result = runner.invoke(app, ["start", "Task"])
 
     assert result.exit_code == 0
     # Should have failed twice
@@ -469,7 +465,6 @@ def test_holistic_deepseek_api_failure(mock_env, mock_boundaries):
     mock_post.side_effect = httpx.HTTPError("500 Server Error")
 
     with (
-        patch("coreason_git_automator.services.workflow.time.sleep"),
         patch("coreason_git_automator.services.ai.wait_exponential", return_value=0),
     ):
         # Explicitly set catch_exceptions=True (even though it is default) to handle RetryError bubbling

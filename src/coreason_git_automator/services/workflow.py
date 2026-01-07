@@ -8,11 +8,11 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from rich.console import Console
+from tenacity import RetryError, Retrying, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from coreason_git_automator.config import AutomationConfig
 from coreason_git_automator.services.ai import DeepSeekClient
@@ -20,6 +20,18 @@ from coreason_git_automator.services.git import GitClient
 from coreason_git_automator.services.github import GitHubService
 from coreason_git_automator.services.jules import JulesWrapper
 from coreason_git_automator.utils.logger import logger
+
+
+class RunFailedError(Exception):
+    """Raised when a CI run fails, triggering a feedback loop."""
+
+    pass
+
+
+class PollingWaitError(Exception):
+    """Raised when CI is still running or queued."""
+
+    pass
 
 
 class WorkflowOrchestrator:
@@ -83,52 +95,83 @@ class WorkflowOrchestrator:
 
     def _monitor_ci_loop(self, branch: str, max_retries: int) -> None:
         """
-        Monitors the CI/CD pipeline and feeds back errors to Jules.
+        Monitors the CI/CD pipeline using tenacity for robust retries.
         """
-        last_processed_run_id = None
-        consecutive_failures = 0
+        last_processed_run_id: Optional[str] = None
 
-        with self.console.status("[bold yellow]Monitoring CI/CD...[/bold yellow]") as status:
-            while True:
-                if consecutive_failures >= max_retries:
-                    self.console.print(f"[bold red]Max retries ({max_retries}) exceeded. Aborting.[/bold red]")
-                    raise RuntimeError(f"Max retries ({max_retries}) exceeded.")
+        def attempt_fix() -> None:
+            nonlocal last_processed_run_id
+            # 1. Wait for a conclusive run result
+            run = self._wait_for_run_completion(branch, last_processed_run_id)
+            current_run_id = str(run.get("databaseId"))
+            conclusion = run.get("conclusion")
 
+            if conclusion == "success":
+                self.console.print("[bold green]CI passed![/bold green]")
+                return  # Success
+
+            if conclusion == "failure":
+                # Update state BEFORE raising
+                last_processed_run_id = current_run_id
+
+                self.console.print(f"[bold red]CI failed (Run {current_run_id}). Fetching logs...[/bold red]")
+                logs = self.github.get_run_logs(current_run_id)
+                last_50_lines = "\n".join(logs.splitlines()[-50:])
+
+                self.console.print("[bold red]Sending feedback to Jules...[/bold red]")
+                self.jules.send_feedback(last_50_lines)
+
+                # Trigger retry
+                raise RunFailedError(f"Run {current_run_id} failed")
+
+        try:
+            for attempt in Retrying(
+                stop=stop_after_attempt(max_retries + 1),
+                reraise=False,  # We want to catch RetryError
+                retry=retry_if_exception_type(RunFailedError),
+            ):
+                with attempt:
+                    attempt_fix()
+        except RetryError:
+            self.console.print(f"[bold red]Max retries ({max_retries}) exceeded. Aborting.[/bold red]")
+            raise RuntimeError(f"Max retries ({max_retries}) exceeded.") from None
+
+    def _wait_for_run_completion(self, branch: str, last_seen_id: Optional[str]) -> Dict[str, Any]:
+        """
+        Polls until a valid, completed run is found.
+        """
+        polling_retry = Retrying(
+            wait=wait_fixed(10),
+            retry=retry_if_exception_type(PollingWaitError),
+            reraise=True,
+        )
+
+        def poll_step() -> Dict[str, Any]:
+            with self.console.status("[bold yellow]Monitoring CI/CD...[/bold yellow]") as status:
                 run_status = self.github.get_latest_run_status(branch)
 
                 if not run_status:
-                    time.sleep(5)
-                    continue
+                    status.update("[bold yellow]No run found yet...[/bold yellow]")
+                    raise PollingWaitError("No run found")
 
                 run_id = str(run_status.get("databaseId"))
-                conclusion = run_status.get("conclusion")
                 state = run_status.get("status")
+
+                if last_seen_id and run_id == last_seen_id:
+                    status.update("[bold yellow]Waiting for new run after failure...[/bold yellow]")
+                    raise PollingWaitError("Waiting for new run")
 
                 if state in ["queued", "in_progress"]:
                     status.update("[bold yellow]Waiting for CI...[/bold yellow]")
-                    time.sleep(10)
-                    continue
+                    raise PollingWaitError("CI in progress")
 
-                if conclusion == "success":
-                    self.console.print("[bold green]CI passed![/bold green]")
-                    break
+                return run_status
 
-                if conclusion == "failure":
-                    if run_id == last_processed_run_id:
-                        status.update("[bold yellow]Waiting for new run after failure...[/bold yellow]")
-                        time.sleep(10)
-                        continue
+        for attempt in polling_retry:
+            with attempt:
+                return poll_step()
 
-                    self.console.print(f"[bold red]CI failed (Run {run_id}). Fetching logs...[/bold red]")
-                    logs = self.github.get_run_logs(run_id)
-                    last_50_lines = "\n".join(logs.splitlines()[-50:])
-
-                    self.console.print("[bold red]Sending feedback to Jules...[/bold red]")
-                    self.jules.send_feedback(last_50_lines)
-                    last_processed_run_id = run_id
-                    consecutive_failures += 1
-                    time.sleep(10)
-                    continue
+        raise RuntimeError("Unreachable")  # pragma: no cover
 
     def _perform_merge_and_push(self, jules_branch: str, base_branch: str) -> None:
         """
