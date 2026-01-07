@@ -8,7 +8,6 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_git_automator
 
-import sys
 from pathlib import Path
 
 from loguru import logger
